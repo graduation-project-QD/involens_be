@@ -273,7 +273,7 @@ class DocumentQueryServiceTest {
     @BeforeEach
     void setUp() {
         log.info("Preparing document query tests");
-        service = new DocumentService(documents, users,
+        service = new DocumentService(documents, mock(DocumentStatusNotificationService.class), users,
                 Mappers.getMapper(DocumentMapper.class), extractionResults,
                 mock(org.involens_be.repository.InvoiceRepository.class),
                 mock(org.involens_be.repository.ReviewTaskRepository.class),

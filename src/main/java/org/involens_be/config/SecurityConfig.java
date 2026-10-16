@@ -50,6 +50,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(
                                 "/api/v1/auth/login",
+                                "/api/v1/auth/refresh-token",
+                                "/ws",
                                 "/actuator/health",
                                 "/actuator/health/**",
                                 "/v3/api-docs/**",

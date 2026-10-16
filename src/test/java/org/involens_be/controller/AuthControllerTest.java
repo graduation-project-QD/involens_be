@@ -27,6 +27,54 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class AuthControllerTest {
 
+    /** Returns the full rotated credential pair without needing an authenticated controller principal. */
+    @Test
+    void refreshReturnsTokenPair() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing refresh token HTTP response");
+        SecurityContextHolder.clearContext();
+        when(service.refreshToken("current-refresh")).thenReturn(org.involens_be.dto.response.LoginResponse.builder()
+                .accessToken("new-access").expiresIn(3600).refreshToken("new-refresh").refreshExpiresIn(604800).build());
+        mvc.perform(post("/api/v1/auth/refresh-token").contentType("application/json")
+                        .content("{\"refreshToken\":\"current-refresh\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value(0))
+                .andExpect(jsonPath("$.data.accessToken").value("new-access"))
+                .andExpect(jsonPath("$.data.expiresIn").value(3600))
+                .andExpect(jsonPath("$.data.refreshToken").value("new-refresh"))
+                .andExpect(jsonPath("$.data.refreshExpiresIn").value(604800));
+    }
+
+    /** Rejects a missing or blank refresh credential as validation failure before reaching business services. */
+    @Test
+    void refreshRequiresCredential() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing refresh request validation");
+        for (String body : List.of("{}", "{\"refreshToken\":\" \"}")) {
+            mvc.perform(post("/api/v1/auth/refresh-token").contentType("application/json").content(body))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        }
+        verifyNoInteractions(service);
+    }
+
+    /** Preserves the existing unauthorized response envelope for invalid refresh credentials. */
+    @Test
+    void refreshRejectsInvalidCredential() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing invalid refresh HTTP response");
+        when(service.refreshToken("invalid")).thenThrow(new org.involens_be.exception.InvalidCredentialsException(
+                "Refresh token is invalid or expired"));
+        mvc.perform(post("/api/v1/auth/refresh-token").contentType("application/json")
+                        .content("{\"refreshToken\":\"invalid\"}"))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.error.code").value("AUTH_INVALID_CREDENTIALS"));
+    }
+
+    /** Passes both the refresh credential and authenticated owner to per-session logout. */
+    @Test
+    void logoutRevokesCurrentRefreshCredential() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing session logout HTTP request");
+        mvc.perform(post("/api/v1/auth/logout").contentType("application/json")
+                        .content("{\"refreshToken\":\"current-refresh\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value(0));
+        verify(service).logout("current-refresh", 12L);
+    }
+
     /** Returns the void success envelope for account soft deletion, including repeated requests. */
     @Test
     void managerSoftDeletesAccount() throws Exception {

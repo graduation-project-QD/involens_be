@@ -38,8 +38,8 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtService jwtService;
     private final UserMapper userMapper;
+    private final RefreshTokenService refreshTokenService;
 
     /** Returns management information for an active account after checking manager access. */
     public AccountListItemResponse getAccount(Long id, UserRole role) {
@@ -213,7 +213,7 @@ public class AuthService {
     }
 
     /**
-     * Authenticates a user by email and password and returns a new JWT access token.
+     * Authenticates a user by email and password and creates an independent access and refresh token session.
      *
      * @param request submitted login credentials
      * @return access token details and authenticated user profile
@@ -236,13 +236,24 @@ public class AuthService {
             throw new InvalidCredentialsException();
         }
 
-        LoginResponse response = LoginResponse.builder()
-                .accessToken(jwtService.generateAccessToken(user))
-                .expiresIn(jwtService.getExpirationSeconds())
-                .user(userMapper.toAuthUserResponse(user))
-                .build();
+        LoginResponse response = refreshTokenService.issue(user);
         log.info("User authenticated successfully. userId={}", user.getId());
         return response;
+    }
+
+    /** Replaces a single-use refresh credential after validating current account authorization. */
+    public LoginResponse refreshToken(String token) {
+        log.info("Processing authentication refresh");
+        LoginResponse response = refreshTokenService.refresh(token);
+        log.info("Authentication refresh completed");
+        return response;
+    }
+
+    /** Revokes the current session's refresh credential while leaving other device sessions available. */
+    public void logout(String token, Long userId) {
+        log.info("Processing current session logout. userId={}", userId);
+        refreshTokenService.revoke(token, userId);
+        log.info("Current session logout completed. userId={}", userId);
     }
 
     /**

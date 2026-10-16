@@ -51,12 +51,14 @@ class ExtractionMessageServiceTest {
 
     private ExtractionMessageService extractionMessageService;
     private DocumentEntity document;
+    @Mock private DocumentStatusNotificationService statusNotifications;
 
     /** Prepares an uploaded document and extraction routing without contacting RabbitMQ or the database. */
     @BeforeEach
     void setUp() {
         log.info("Setting up extraction dispatch test");
         extractionMessageService = new ExtractionMessageService(rabbitTemplate, new Gson(), documentRepository,
+                statusNotifications,
                 org.mockito.Mockito.mock(AiExtractionResultService.class));
         ReflectionTestUtils.setField(extractionMessageService, "enabled", true);
         ReflectionTestUtils.setField(extractionMessageService, "extractExchange", "test-extraction");
@@ -82,11 +84,14 @@ class ExtractionMessageServiceTest {
         extractionMessageService.sendExtract(document);
 
         ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
-        InOrder dispatchOrder = inOrder(rabbitTemplate, documentRepository);
+        InOrder dispatchOrder = inOrder(rabbitTemplate, documentRepository, statusNotifications);
         dispatchOrder.verify(rabbitTemplate).send(
                 eq("test-extraction"), eq("test-extract"), messageCaptor.capture());
         dispatchOrder.verify(documentRepository).updateDispatchStateIfMatching(
                 document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null);
+        dispatchOrder.verify(statusNotifications).notifyCommitted(org.mockito.ArgumentMatchers.argThat(
+                event -> event.payload().documentId().equals(document.getId())
+                        && event.payload().currentState() == DocumentState.PROCESSING));
         verifyNoMoreInteractions(rabbitTemplate, documentRepository);
 
         Message message = messageCaptor.getValue();

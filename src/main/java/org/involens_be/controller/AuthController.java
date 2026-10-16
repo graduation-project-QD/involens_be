@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.involens_be.dto.request.LoginRequest;
+import org.involens_be.dto.request.RefreshTokenRequest;
 import org.involens_be.dto.request.CreateUserAccountRequest;
 import org.involens_be.dto.response.AuthUserResponse;
 import org.involens_be.dto.response.BaseResponse;
@@ -170,14 +171,14 @@ public class AuthController {
     }
 
     /**
-     * Authenticates an account using email and password and issues an access token.
+     * Authenticates an account using email and password and issues access and refresh tokens.
      *
      * @param request validated login credentials
      * @return successful response containing token and user information
     */
     @Operation(
             summary = "Log in",
-            description = "Authenticates an account and returns a JWT access token.")
+            description = "Authenticates an account and returns an access token and a single-use refresh token.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Authentication succeeded"),
             @ApiResponse(responseCode = "400", description = "Request validation failed"),
@@ -187,6 +188,21 @@ public class AuthController {
     public BaseResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         log.info("Received login request. email={}", request.getEmail());
         LoginResponse response = authService.login(request);
+        return BaseResponse.success(response);
+    }
+
+    /** Exchanges one valid refresh credential for new access and refresh tokens without requiring an access token. */
+    @Operation(summary = "Refresh authentication tokens",
+            description = "Send only the refresh token body, without an Authorization header. "
+                    + "The refresh token is single-use; successful rotation replaces it with a new seven-day token.")
+    @ApiResponses({@ApiResponse(responseCode = "200", description = "Token pair rotated"),
+            @ApiResponse(responseCode = "400", description = "Refresh token is required"),
+            @ApiResponse(responseCode = "401", description = "Refresh token is invalid, expired or revoked")})
+    @PostMapping("/refresh-token")
+    public BaseResponse<LoginResponse> refreshToken(@Valid @RequestBody RefreshTokenRequest request) {
+        log.info("Received authentication refresh request");
+        LoginResponse response = authService.refreshToken(request.getRefreshToken());
+        log.info("Authentication refresh request completed");
         return BaseResponse.success(response);
     }
 
@@ -212,22 +228,28 @@ public class AuthController {
     }
 
     /**
-     * Completes stateless logout on the server; the client must discard its access token.
+     * Revokes the current session's refresh token; the client must discard both tokens and close its WebSocket.
      *
-     * @param authentication current validated authentication
+     * @param jwt current validated access token identifying the session owner
      * @return success response acknowledging logout
     */
     @Operation(
             summary = "Log out",
-            description = "Acknowledges stateless logout; the client must discard its JWT.",
+            description = "Revokes the supplied refresh token belonging to the bearer user. Other sessions remain active. "
+                    + "The existing access token remains valid until expiry; discard both tokens and close WebSocket.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Logout acknowledged successfully"),
-            @ApiResponse(responseCode = "401", description = "JWT is missing or invalid")
+            @ApiResponse(responseCode = "200", description = "Current refresh token revoked"),
+            @ApiResponse(responseCode = "400", description = "Refresh token is required"),
+            @ApiResponse(responseCode = "401", description = "Access or refresh token is invalid")
     })
     @PostMapping("/logout")
-    public BaseResponse<Void> logout(@Parameter(hidden = true) Authentication authentication) {
-        log.info("Processing stateless logout. subject={}", authentication.getName());
+    public BaseResponse<Void> logout(@Valid @RequestBody RefreshTokenRequest request,
+            @Parameter(hidden = true) @AuthenticationPrincipal Jwt jwt) {
+        Long userId = ((Number) jwt.getClaim("userId")).longValue();
+        log.info("Received current session logout. userId={}", userId);
+        authService.logout(request.getRefreshToken(), userId);
+        log.info("Current session logout request completed. userId={}", userId);
         return BaseResponse.ok(null, "Logout successfully");
     }
 

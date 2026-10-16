@@ -33,6 +33,7 @@ import java.util.Map;
 public class AiExtractionResultService {
     private final Gson gson;
     private final DocumentRepository documentRepository;
+    private final DocumentStatusNotificationService statusNotifications;
     private final ExtractionResultRepository extractionResultRepository;
     private final InvoiceRepository invoiceRepository;
     private final InvoiceItemRepository invoiceItemRepository;
@@ -74,6 +75,7 @@ public class AiExtractionResultService {
         document.setErrorCode(result.getErrorCode());
         document.setErrorMessage(result.getErrorMessage());
         documentRepository.save(document);
+        statusNotifications.afterCommit(document, DocumentState.PROCESSING);
         log.info("AI result persisted. documentId={}, state={}", document.getId(), document.getCurrentState());
     }
 

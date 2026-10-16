@@ -66,13 +66,15 @@ class DocumentServiceTest {
     private ExtractionMessageService extractionMessageService;
 
     private DocumentUploadService documentUploadService;
+    @Mock private DocumentStatusNotificationService statusNotifications;
 
     /** Initializes upload collaborators and transaction callbacks without external connections. */
     @BeforeEach
     void setUp() {
         log.info("Setting up document upload service test");
         TransactionSynchronizationManager.initSynchronization();
-        documentUploadService = new DocumentUploadService(documentRepository, minioClient,
+        documentUploadService = new DocumentUploadService(documentRepository,
+                statusNotifications, minioClient,
                 Mappers.getMapper(DocumentMapper.class), extractionMessageService);
         ReflectionTestUtils.setField(documentUploadService, "bucket", "test-documents");
         log.info("Document upload service test setup completed");
@@ -416,6 +418,7 @@ class DocumentServiceTest {
         });
 
         DocumentUploadItemResponse response = documentUploadService.retryExtraction(originalId, 12L, role);
+        verify(statusNotifications).afterCommit(document, initialState);
 
         assertEquals(originalId, response.getId());
         assertEquals("receipt.jpg", response.getOriginalFilename());

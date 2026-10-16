@@ -22,6 +22,17 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
 
+    /** Delegates refresh rotation and current-session logout to the transactional credential service. */
+    @Test
+    void delegatesRefreshAndLogout() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing authentication refresh and logout delegation");
+        var response = org.involens_be.dto.response.LoginResponse.builder().accessToken("new-access").build();
+        when(refreshTokenService.refresh("refresh")).thenReturn(response);
+        assertSame(response, service.refreshToken("refresh"));
+        service.logout("refresh", 7L);
+        verify(refreshTokenService).revoke("refresh", 7L);
+    }
+
     /** Revokes a signed JWT after soft deletion and keeps it revoked when PATCH restores the account. */
     @Test
     void softDeletionRevokesSessionsEvenAfterRestoration() {
@@ -113,7 +124,7 @@ class AuthServiceTest {
                 () -> service.login(request));
 
         assertEquals("Account not found", exception.getMessage());
-        verifyNoInteractions(passwordEncoder, jwtService, userMapper);
+        verifyNoInteractions(passwordEncoder, refreshTokenService, userMapper);
     }
 
     /** Returns the public profile and access token when an active account supplies valid credentials. */
@@ -123,12 +134,15 @@ class AuthServiceTest {
                 .status(CommonStatus.ACTIVE).build();
         when(users.findByEmailIgnoreCase("user@example.com")).thenReturn(java.util.Optional.of(user));
         when(passwordEncoder.matches("Password!", "hash")).thenReturn(true);
-        when(jwtService.generateAccessToken(user)).thenReturn("signed-token");
+        when(refreshTokenService.issue(user)).thenReturn(org.involens_be.dto.response.LoginResponse.builder()
+                .accessToken("signed-token").refreshToken("refresh-token").refreshExpiresIn(604800).build());
 
         var response = service.login(new org.involens_be.dto.request.LoginRequest("user@example.com", "Password!"));
 
         assertEquals("signed-token", response.getAccessToken());
-        verify(userMapper).toAuthUserResponse(user);
+        assertEquals("refresh-token", response.getRefreshToken());
+        assertEquals(604800, response.getRefreshExpiresIn());
+        verify(refreshTokenService).issue(user);
     }
 
     /** Hides a soft-deleted current user's profile even if authentication was resolved before deletion. */
@@ -324,14 +338,14 @@ class AuthServiceTest {
 
     @Mock private UserRepository users;
     @Mock private PasswordEncoder passwordEncoder;
-    @Mock private JwtService jwtService;
+    @Mock private RefreshTokenService refreshTokenService;
     @Mock private UserMapper userMapper;
     private AuthService service;
 
     /** Configures an isolated authentication service for account-creation business tests. */
     @BeforeEach
     void setUp() {
-        service = new AuthService(users, passwordEncoder, jwtService, userMapper);
+        service = new AuthService(users, passwordEncoder, userMapper, refreshTokenService);
     }
 
     /** Creates an active account with the selected role and a BCrypt-ready encoded password. */

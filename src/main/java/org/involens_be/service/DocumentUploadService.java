@@ -61,6 +61,7 @@ public class DocumentUploadService {
             "pdf", Set.of("application/pdf"));
 
     private final DocumentRepository documentRepository;
+    private final DocumentStatusNotificationService statusNotifications;
     private final MinioClient minioClient;
     private final DocumentMapper documentMapper;
     private final ExtractionMessageService extractionMessageService;
@@ -83,6 +84,7 @@ public class DocumentUploadService {
                     return new DocumentNotFoundException();
                 });
         validateRetryDocument(document);
+        DocumentState previousState = document.getCurrentState();
         boolean published = extractionMessageService.publishExtract(document);
         DocumentState dispatchState = published ? DocumentState.PROCESSING : DocumentState.PENDING_FAILURE;
         try {
@@ -99,6 +101,7 @@ public class DocumentUploadService {
             throw new DocumentRetryException(DocumentRetryException.Reason.PERSISTENCE_FAILED,
                     "Không thể lưu trạng thái tài liệu sau khi gửi yêu cầu sang AI.", exception);
         }
+        statusNotifications.afterCommit(document, previousState);
         if (!published) {
             log.warn("Document extraction retry failed; pending failure state saved. documentId={}", documentId);
             throw new DocumentRetryException(DocumentRetryException.Reason.DISPATCH_FAILED,
@@ -183,6 +186,7 @@ public class DocumentUploadService {
             }
 
             List<DocumentEntity> savedDocuments = documentRepository.saveAllAndFlush(documents);
+            savedDocuments.forEach(document -> statusNotifications.afterCommit(document, null));
             List<DocumentEntity> uploadedDocuments = savedDocuments.stream()
                     .filter(document -> document.getUploadStatus() == UploadStatus.UPLOADED)
                     .toList();

@@ -803,3 +803,133 @@ JWT thiếu, sai chữ ký, hết hạn, đã bị thu hồi hoặc thuộc tài
 - JWT và truy cập công khai: `src/main/java/org/involens_be/config/SecurityConfig.java`.
 - Mã lỗi: `src/main/java/org/involens_be/exception/GlobalExceptionHandler.java`.
 - Enum trạng thái: `src/main/java/org/involens_be/common/`.
+
+## Development mock invoices
+
+With the `dev` profile, `MOCK_INVOICES_ENABLED=true` (default) seeds ten synthetic
+invoices after startup for the active MANAGER configured by `app.admin.email`
+(`ADMIN_EMAIL`, default `quan@involens.com`). A missing, inactive, or non-manager
+account causes seeding to be skipped with a log message.
+
+- Five documents have `REVIEW_REQUIRED`, AI status `REVIEW_REQUIRED`, and `PENDING`
+  review tasks. They include low-confidence recognition and some absent addresses.
+- Five documents have `EXTRACT_SUCCESS` and AI status `SUCCESS`.
+- Each invoice has synthetic seller, date, VND amounts, and one invoice line.
+- Filenames are `mock-invoice-dev-1.pdf` through `mock-invoice-dev-10.pdf`.
+  These are data-only samples: no MinIO object is created and `file_url` is null.
+
+Log in as the configured manager and use the existing document list, review task
+list, and `GET /api/v1/documents/{documentId}/extraction-result` APIs. Submit review
+corrections through `PATCH /api/v1/documents/{documentId}/extraction-result`.
+Seeding uses the normal AI persistence service without calling an AI worker or
+RabbitMQ. Existing sample filenames for this manager are skipped, including
+reviewed or inactive documents; restarting does not overwrite FE changes.
+The batch rolls back on persistence failure. Set `MOCK_INVOICES_ENABLED=false`
+to disable future seeding; existing samples remain available.
+
+## Dedicated extracted invoice list
+
+`GET /api/v1/invoices` requires a bearer access token. Managers see all active
+documents in the selected extraction states; employees see only their uploads.
+This endpoint is independent of the document list API.
+
+| Query | Default | Accepted values |
+|---|---|---|
+| `q` | No filename filter | Case-insensitive substring of the original filename |
+| `date_from` | No lower bound | Invoice date >= this date, `YYYY-MM-DD` |
+| `date_to` | No upper bound | Invoice date <= this date, `YYYY-MM-DD` |
+| `current_state` | All three states | `EXTRACT_SUCCESS`, `REVIEW_REQUIRED`, `EXTRACT_FAILED` |
+| `page` | `1` | Integer >= 1 |
+| `page_size` | `8` | Integer from 1 to 100 |
+
+Results are ordered by upload time descending, then document ID descending.
+Date filtering uses `invoice_date`, includes both boundaries and accepts either
+boundary independently. Documents with no invoice date are excluded when any
+date boundary is supplied, and retained otherwise. Reversed ranges and invalid
+dates return HTTP 400 with `VALIDATION_ERROR`. Date filters combine with all
+other filters and apply to the total count as well as the returned page.
+Filename search trims leading/trailing whitespace and ignores empty or blank `q`.
+The characters `%`, `_`, and `!` are matched literally. Search combines with
+the state and ownership filters and applies to both the page and its total count.
+`id` is the invoice ID and can be null when extraction failed before an invoice
+was created. `document_id` is always present and can be used with the existing
+document detail and extraction-result endpoints. `seller_name` comes from the
+saved invoice, including any human corrections. Error fields come from the
+document. Invoice fields remain null when unavailable. Empty selections return
+HTTP 200 with `items: []` and `total: 0`. Invalid query values return HTTP 400
+with the existing `VALIDATION_ERROR` envelope. Missing or invalid JWTs return 401.
+
+The following commands are each one line and work with `curl.exe` in PowerShell.
+Replace `<ACCESS_TOKEN>` with the token returned by login.
+
+```shell
+curl.exe "http://localhost:8080/api/v1/invoices?page=1&page_size=8" -H "Authorization: Bearer <ACCESS_TOKEN>"
+curl.exe -G "http://localhost:8080/api/v1/invoices" --data-urlencode "q=mock-invoice-dev-6" --data-urlencode "current_state=EXTRACT_SUCCESS" --data-urlencode "page=1" --data-urlencode "page_size=8" -H "Authorization: Bearer <ACCESS_TOKEN>"
+curl.exe -G "http://localhost:8080/api/v1/invoices" --data-urlencode "q=mock-invoice" --data-urlencode "date_from=2026-10-01" --data-urlencode "date_to=2026-10-15" --data-urlencode "page=1" --data-urlencode "page_size=8" -H "Authorization: Bearer <ACCESS_TOKEN>"
+curl.exe "http://localhost:8080/api/v1/invoices?current_state=EXTRACT_SUCCESS&page=1&page_size=8" -H "Authorization: Bearer <ACCESS_TOKEN>"
+curl.exe "http://localhost:8080/api/v1/invoices?current_state=REVIEW_REQUIRED&page=1&page_size=8" -H "Authorization: Bearer <ACCESS_TOKEN>"
+curl.exe "http://localhost:8080/api/v1/invoices?current_state=EXTRACT_FAILED&page=1&page_size=8" -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+Illustrative all-states response; identifiers and timestamps are examples, not
+live database values. The existing development seed creates success and review
+samples only; failed outcomes appear when such documents exist in the database.
+
+```json
+{
+  "status": 0,
+  "error": null,
+  "data": {
+    "items": [
+      {
+        "id": "bcbd7352-9eb3-4bad-8357-3dd64e957110",
+        "document_id": "5ca79f91-47be-4ca7-b314-4497d6d09e21",
+        "original_filename": "mock-invoice-dev-6.pdf",
+        "seller_name": "Cua hang mau 6",
+        "invoice_number": null,
+        "invoice_date": "2026-10-06",
+        "total_amount": 300000.00,
+        "currency": "VND",
+        "uploaded_by_name": "Nguyen Hoang Quan",
+        "uploaded_at": "2026-10-15T07:00:00Z",
+        "current_state": "EXTRACT_SUCCESS",
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "id": "bcbd7352-9eb3-4bad-8357-3dd64e957111",
+        "document_id": "5ca79f91-47be-4ca7-b314-4497d6d09e22",
+        "original_filename": "mock-invoice-dev-1.pdf",
+        "seller_name": "Cua hang mau 1",
+        "invoice_number": null,
+        "invoice_date": "2026-10-01",
+        "total_amount": 50000.00,
+        "currency": "VND",
+        "uploaded_by_name": "Nguyen Hoang Quan",
+        "uploaded_at": "2026-10-15T06:59:00Z",
+        "current_state": "REVIEW_REQUIRED",
+        "error_code": null,
+        "error_message": null
+      },
+      {
+        "id": null,
+        "document_id": "5ca79f91-47be-4ca7-b314-4497d6d09e23",
+        "original_filename": "failed-invoice.pdf",
+        "seller_name": null,
+        "invoice_number": null,
+        "invoice_date": null,
+        "total_amount": null,
+        "currency": null,
+        "uploaded_by_name": "Nguyen Hoang Quan",
+        "uploaded_at": "2026-10-15T06:58:00Z",
+        "current_state": "EXTRACT_FAILED",
+        "error_code": "IMAGE_DOWNLOAD_FAILED",
+        "error_message": "MinIO unavailable"
+      }
+    ],
+    "total": 3,
+    "page": 1,
+    "page_size": 8
+  }
+}
+```

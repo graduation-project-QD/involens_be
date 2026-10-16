@@ -32,6 +32,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class AiExtractionResultServiceTest {
     @Mock private DocumentRepository documents;
+    @Mock private DocumentStatusNotificationService statusNotifications;
     @Mock private ExtractionResultRepository results;
     @Mock private InvoiceRepository invoices;
     @Mock private InvoiceItemRepository items;
@@ -46,7 +47,7 @@ class AiExtractionResultServiceTest {
     void setUp() {
         log.info("Preparing AI result persistence test");
         service = new AiExtractionResultService(new GsonBuilder().excludeFieldsWithoutExposeAnnotation().create(),
-                documents, results, invoices, items, tasks);
+                documents, statusNotifications, results, invoices, items, tasks);
         document = DocumentEntity.builder().id(UUID.randomUUID()).currentState(DocumentState.PROCESSING).build();
     }
 
@@ -108,6 +109,7 @@ class AiExtractionResultServiceTest {
         Map<?, ?> meta = (Map<?, ?>) data.get("meta");
         assertEquals("1234567890123456789", meta.get("future_field").toString());
         assertEquals(DocumentState.EXTRACT_SUCCESS, document.getCurrentState());
+        verify(statusNotifications).afterCommit(document, DocumentState.PROCESSING);
         verify(items).saveAll(argThat(lines -> {
             InvoiceItemEntity line = lines.iterator().next();
             return line.getUnitPrice() == null && line.getQuantity().equals(1.5f)

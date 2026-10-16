@@ -26,6 +26,7 @@ public class ExtractionMessageService {
     private final RabbitTemplate rabbitTemplate;
     private final Gson gson;
     private final DocumentRepository documentRepository;
+    private final DocumentStatusNotificationService statusNotifications;
     private final AiExtractionResultService aiExtractionResultService;
     private static final int MAX_SEND_ATTEMPTS = 4;
     public static final String DISPATCH_FAILED_CODE = "EXTRACTION_DISPATCH_FAILED";
@@ -48,7 +49,7 @@ public class ExtractionMessageService {
         log.info("Dispatching uploaded document for extraction. documentId={}", document.getId());
         DocumentState dispatchState = publishExtract(document)
                 ? DocumentState.PROCESSING : DocumentState.PENDING_FAILURE;
-        markDocumentDispatchState(document.getId(), dispatchState);
+        markDocumentDispatchState(document, dispatchState);
         log.info("Uploaded document extraction dispatch completed. documentId={}", document.getId());
     }
 
@@ -89,7 +90,8 @@ public class ExtractionMessageService {
      * Persists dispatch state and its failure reason, or clears old errors, after the upload commits.
      * Preserves later document states and logs database failures without publishing the request again.
      */
-    private void markDocumentDispatchState(UUID documentId, DocumentState dispatchState) {
+    private void markDocumentDispatchState(DocumentEntity document, DocumentState dispatchState) {
+        UUID documentId = document.getId();
         log.info("Updating document state after extraction dispatch. documentId={}, state={}", documentId, dispatchState);
         try {
             int updatedDocuments = documentRepository.updateDispatchStateIfMatching(
@@ -101,6 +103,10 @@ public class ExtractionMessageService {
                         documentId);
                 return;
             }
+            statusNotifications.notifyCommitted(new DocumentStatusChangedEvent(document.getUploadedById(),
+                    new org.involens_be.dto.response.DocumentStatusResponse(documentId, dispatchState,
+                            dispatchState == DocumentState.PENDING_FAILURE ? DISPATCH_FAILED_CODE : null,
+                            dispatchState == DocumentState.PENDING_FAILURE ? DISPATCH_FAILED_MESSAGE : null)));
             log.info("Document dispatch state saved. documentId={}, state={}", documentId, dispatchState);
         } catch (RuntimeException exception) {
             log.error("Document state update after extraction dispatch failed. documentId={}",

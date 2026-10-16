@@ -42,6 +42,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class ExtractionResultServiceTest {
     @Mock private DocumentRepository documents;
+    @Mock private DocumentStatusNotificationService statusNotifications;
     @Mock private ExtractionResultRepository extractionResults;
     @Mock private InvoiceRepository invoices;
     @Mock private ReviewTaskRepository reviewTasks;
@@ -53,6 +54,7 @@ class ExtractionResultServiceTest {
     void setUp() {
         org.slf4j.LoggerFactory.getLogger(getClass()).info("Preparing extraction-result service tests");
         service = new DocumentService(documents,
+                statusNotifications,
                 mock(UserRepository.class), Mappers.getMapper(DocumentMapper.class), extractionResults,
                 invoices, reviewTasks, invoiceItems);
         org.slf4j.LoggerFactory.getLogger(getClass()).info("Extraction-result service test setup completed");
@@ -146,6 +148,7 @@ class ExtractionResultServiceTest {
                 "{}", UpdateInvoiceExtractionRequest.class);
 
         var response = service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE);
+        verify(statusNotifications).afterCommit(document, DocumentState.REVIEW_REQUIRED);
 
         assertAll(
                 () -> assertEquals("AI Seller", response.getInvoice().getSellerName()),

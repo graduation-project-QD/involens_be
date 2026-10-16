@@ -59,6 +59,7 @@ import java.math.BigDecimal;
 public class DocumentService {
 
     private final DocumentRepository documentRepository;
+    private final DocumentStatusNotificationService statusNotifications;
     private final UserRepository userRepository;
     private final DocumentMapper documentMapper;
     private final ExtractionResultRepository extractionResultRepository;
@@ -219,6 +220,7 @@ public class DocumentService {
         invoice.setApprovedAt(completedAt);
         extractionResult.setAiStatus(AiStatus.SUCCESS);
         extractionResult.setHumanReviewRequired(false);
+        DocumentState previousState = document.getCurrentState();
         document.setCurrentState(DocumentState.EXTRACT_SUCCESS);
         var reviewTasks = reviewTaskRepository.findAllByExtractionResultId(extractionResult.getId());
         reviewTasks.forEach(task -> {
@@ -236,6 +238,7 @@ public class DocumentService {
         extractionResultRepository.save(extractionResult);
         documentRepository.save(document);
         reviewTaskRepository.saveAll(reviewTasks);
+        statusNotifications.afterCommit(document, previousState);
         var items = loadInvoiceItems(savedInvoice.getId());
         var response = UpdateExtractionResultResponse.builder()
                 .extractionResult(documentMapper.toExtractionResultResponse(extractionResult, savedInvoice, items))

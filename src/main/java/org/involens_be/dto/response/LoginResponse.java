@@ -19,5 +19,11 @@ public class LoginResponse {
     private long expiresIn;
 
     @Expose
+    private String refreshToken;
+
+    @Expose
+    private long refreshExpiresIn;
+
+    @Expose
     private AuthUserResponse user;
 }
