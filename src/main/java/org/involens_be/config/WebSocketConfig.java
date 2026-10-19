@@ -23,11 +23,11 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final WebSocketSecurityInterceptor security;
     private final WebSocketSessionService sessions;
 
-    /** Exposes the native STOMP endpoint only to the approved frontend origin. */
+    /** Exposes the native STOMP endpoint only to the approved frontend origins. */
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         log.info("Configuring document WebSocket endpoint /ws");
-        registry.addEndpoint("/ws").setAllowedOrigins("http://localhost:5173");
+        registry.addEndpoint("/ws").setAllowedOrigins("http://localhost:5173", "http://3.25.226.163");
         registry.setPreserveReceiveOrder(true);
     }
 
