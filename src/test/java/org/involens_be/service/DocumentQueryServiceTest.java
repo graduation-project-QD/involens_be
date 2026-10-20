@@ -1,8 +1,11 @@
 package org.involens_be.service;
 
 import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Path;
+import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import lombok.extern.slf4j.Slf4j;
 import org.involens_be.common.CommonStatus;
 import org.involens_be.common.DocumentState;
@@ -10,6 +13,7 @@ import org.involens_be.common.UploadStatus;
 import org.involens_be.common.UserRole;
 import org.involens_be.dto.request.DocumentListRequest;
 import org.involens_be.entity.DocumentEntity;
+import org.involens_be.entity.UserEntity;
 import org.involens_be.exception.DocumentNotFoundException;
 import org.involens_be.exception.InvalidDocumentFilterException;
 import org.involens_be.repository.DocumentRepository;
@@ -281,7 +285,7 @@ class DocumentQueryServiceTest {
         log.info("Document query test setup completed");
     }
 
-    /** Verifies owner and active restrictions, Vietnam date boundaries, literal search, and default pagination. */
+    /** Keeps owner, state, date and filename restrictions while matching a keyword against filename or uploader. */
     @Test
     @SuppressWarnings("unchecked")
     void listAppliesOwnerStatusDateAndFilenameFilters() {
@@ -314,13 +318,42 @@ class DocumentQueryServiceTest {
         Path<Object> state = mock(Path.class);
         Path<OffsetDateTime> timestamp = mock(Path.class);
         Path<String> filename = mock(Path.class);
+        CriteriaQuery<DocumentEntity> query = mock(CriteriaQuery.class);
+        Subquery<Long> uploaderMatch = mock(Subquery.class);
+        Root<UserEntity> uploader = mock(Root.class);
+        Path<Long> uploaderId = mock(Path.class);
+        Path<String> uploaderName = mock(Path.class);
+        Predicate filenameMatch = mock(Predicate.class);
+        Predicate uploaderExists = mock(Predicate.class);
+        Predicate keywordMatch = mock(Predicate.class);
+        Predicate filenameFilter = mock(Predicate.class);
+        Predicate uploaderNameMatch = mock(Predicate.class);
+        Predicate uploaderCorrelation = mock(Predicate.class);
+        Predicate activeFilter = mock(Predicate.class);
+        Predicate ownerFilter = mock(Predicate.class);
+        Predicate stateFilter = mock(Predicate.class);
+        when(query.subquery(Long.class)).thenReturn(uploaderMatch);
+        when(uploaderMatch.from(UserEntity.class)).thenReturn(uploader);
+        when(uploader.<Long>get("id")).thenReturn(uploaderId);
+        when(uploader.<String>get("fullName")).thenReturn(uploaderName);
+        when(uploaderMatch.select(uploaderId)).thenReturn(uploaderMatch);
+        when(builder.lower(uploaderName)).thenReturn(uploaderName);
+        when(builder.like(uploaderName, "%bill!_10!%%", '!')).thenReturn(uploaderNameMatch);
+        doReturn(activeFilter).when(builder).equal(status, CommonStatus.ACTIVE);
+        doReturn(ownerFilter).when(builder).equal(owner, 12L);
+        doReturn(stateFilter).when(builder).equal(state, DocumentState.PROCESSING);
+        doReturn(uploaderCorrelation).when(builder).equal(uploaderId, owner);
+        when(builder.like(filename, "%bill!_10!%%", '!')).thenReturn(filenameMatch);
+        when(builder.like(filename, "%receipt%", '!')).thenReturn(filenameFilter);
+        when(builder.exists(uploaderMatch)).thenReturn(uploaderExists);
+        when(builder.or(filenameMatch, uploaderExists)).thenReturn(keywordMatch);
         when(root.get("uploadedById")).thenReturn(owner);
         when(root.get("status")).thenReturn(status);
         when(root.get("currentState")).thenReturn(state);
         when(root.<OffsetDateTime>get("uploadedAt")).thenReturn(timestamp);
         when(root.<String>get("originalFilename")).thenReturn(filename);
         when(builder.lower(filename)).thenReturn(filename);
-        specification.getValue().toPredicate(root, null, builder);
+        specification.getValue().toPredicate(root, query, builder);
 
         verify(builder).equal(owner, 12L);
         verify(builder, never()).equal(owner, 99L);
@@ -330,7 +363,49 @@ class DocumentQueryServiceTest {
         verify(builder).lessThan(timestamp, OffsetDateTime.parse("2026-09-11T00:00:00+07:00"));
         verify(builder).like(filename, "%bill!_10!%%", '!');
         verify(builder).like(filename, "%receipt%", '!');
+        verify(builder).like(uploaderName, "%bill!_10!%%", '!');
+        verify(builder).equal(uploaderId, owner);
+        verify(uploaderMatch).where(uploaderCorrelation, uploaderNameMatch);
+        verify(builder).or(filenameMatch, uploaderExists);
+        ArgumentCaptor<Predicate[]> combinedFilters = ArgumentCaptor.forClass(Predicate[].class);
+        verify(builder).and(combinedFilters.capture());
+        assertTrue(java.util.Arrays.asList(combinedFilters.getValue()).contains(keywordMatch));
+        assertTrue(java.util.Arrays.asList(combinedFilters.getValue()).contains(filenameFilter));
+        assertTrue(java.util.Arrays.asList(combinedFilters.getValue()).contains(activeFilter));
+        assertTrue(java.util.Arrays.asList(combinedFilters.getValue()).contains(ownerFilter));
+        assertTrue(java.util.Arrays.asList(combinedFilters.getValue()).contains(stateFilter));
         verifyNoInteractions(users);
+    }
+
+    /** Skips uploader keyword lookups for blank searches and retains the manager's explicit uploader filter. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void blankKeywordPreservesManagerUploaderFilter() {
+        log.info("Testing blank document keywords with manager uploader filtering");
+        when(documents.findAll(any(Specification.class), any(Pageable.class))).thenReturn(Page.empty());
+        for (String keyword : new String[]{null, "", "  "}) {
+            var request = new DocumentListRequest();
+            request.setQ(keyword);
+            request.setUploaded_by(99L);
+            service.listDocuments(request, 12L, UserRole.MANAGER);
+        }
+        ArgumentCaptor<Specification<DocumentEntity>> specifications = ArgumentCaptor.forClass(Specification.class);
+        verify(documents, times(3)).findAll(specifications.capture(), any(Pageable.class));
+        Root<DocumentEntity> root = mock(Root.class);
+        CriteriaBuilder builder = mock(CriteriaBuilder.class);
+        CriteriaQuery<DocumentEntity> query = mock(CriteriaQuery.class);
+        Path<Object> owner = mock(Path.class);
+        Path<Object> status = mock(Path.class);
+        when(root.get("uploadedById")).thenReturn(owner);
+        when(root.get("status")).thenReturn(status);
+        for (var specification : specifications.getAllValues()) {
+            specification.toPredicate(root, query, builder);
+        }
+        verify(builder, times(3)).equal(owner, 99L);
+        verify(builder, times(3)).equal(status, CommonStatus.ACTIVE);
+        verify(builder, never()).equal(owner, 12L);
+        verifyNoInteractions(query, users);
+        log.info("Blank document keywords preserve manager uploader filtering");
     }
 
     /** Rejects invalid dates and paging before any document lookup can run. */

@@ -96,14 +96,20 @@ class ExportJobControllerTest {
         SecurityContextHolder.clearContext();
     }
 
-    /** Binds camel-case filters and returns null for the unselected status group. */
+    /** Preserves request filters and counts while returning invoice preview fields without an aggregate amount. */
     @Test
     void previewBindsFiltersAndReturnsApprovedCounts() throws Exception {
         when(service.preview(any(), eq(12L), eq(UserRole.EMPLOYEE))).thenAnswer(invocation -> {
             ExportPreviewRequest request = invocation.getArgument(0);
             org.junit.jupiter.api.Assertions.assertEquals("2026-09-01", request.getDateFrom());
             org.junit.jupiter.api.Assertions.assertEquals(ExportPreviewRequest.Status.APPROVED, request.getStatus());
-            return ExportPreviewResponse.builder().totalInvoices(5L).approved(5L).pendingReview(null).build();
+            return ExportPreviewResponse.builder().totalInvoices(5L).approved(5L).pendingReview(null)
+                    .items(List.of(ExportPreviewResponse.Item.builder()
+                            .invoiceNumber("000123").sellerName("Supplier")
+                            .invoiceDate(java.time.LocalDate.of(2026, 9, 15))
+                            .totalAmount(new java.math.BigDecimal("125000.50"))
+                            .status(ExportPreviewRequest.Status.APPROVED).build()))
+                    .build();
         });
 
         mvc.perform(post("/api/v1/export-jobs/preview")
@@ -114,7 +120,13 @@ class ExportJobControllerTest {
                 .andExpect(jsonPath("$.status").value(0))
                 .andExpect(jsonPath("$.data.total_invoices").value(5))
                 .andExpect(jsonPath("$.data.approved").value(5))
-                .andExpect(jsonPath("$.data.pending_review").value(nullValue()));
+                .andExpect(jsonPath("$.data.pending_review").value(nullValue()))
+                .andExpect(jsonPath("$.data.total_amount").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].invoice_number").value("000123"))
+                .andExpect(jsonPath("$.data.items[0].seller_name").value("Supplier"))
+                .andExpect(jsonPath("$.data.items[0].invoice_date").value("2026-09-15"))
+                .andExpect(jsonPath("$.data.items[0].total_amount").value(125000.50))
+                .andExpect(jsonPath("$.data.items[0].status").value("APPROVED"));
     }
 
     /** Returns a validation response when the requested export status is unsupported. */

@@ -21,7 +21,7 @@ import static org.mockito.Mockito.*;
 /** Verifies invoice list scoping, pagination and nullable failed extraction data. */
 @Slf4j
 class InvoiceServiceTest {
-    /** Passes invoice date bounds together with filename, state and ownership without converting calendar dates. */
+    /** Passes invoice date bounds together with keyword, state and ownership without converting calendar dates. */
     @Test
     void combinesInvoiceDateBoundsWithOtherFilters() {
         log.info("Testing combined invoice date filters");
@@ -41,10 +41,10 @@ class InvoiceServiceTest {
         verify(repository).findVisibleInvoices(states, false, 12L, "%bill%", from, to, pageable);
     }
 
-    /** Combines a literal filename search with employee ownership, state filtering and pagination. */
+    /** Combines a literal keyword search with employee ownership, state filtering and pagination. */
     @Test
     void searchesLiteralFilename() {
-        log.info("Testing trimmed case-insensitive literal invoice filename search");
+        log.info("Testing trimmed case-insensitive literal invoice keyword search");
         var repository = mock(InvoiceRepository.class);
         var request = new InvoiceListRequest();
         request.setQ("  BILL_50%!  ");
@@ -61,10 +61,10 @@ class InvoiceServiceTest {
         verify(repository).findVisibleInvoices(states, false, 12L, "%bill!_50!%!!%", null, null, pageable);
     }
 
-    /** Ignores empty and whitespace-only filename searches so normal invoice listing still works. */
+    /** Ignores empty and whitespace-only keyword searches so normal invoice listing still works. */
     @Test
     void ignoresBlankSearch() {
-        log.info("Testing blank invoice filename searches");
+        log.info("Testing blank invoice keyword searches");
         var repository = mock(InvoiceRepository.class);
         var states = List.of(DocumentState.EXTRACT_SUCCESS, DocumentState.REVIEW_REQUIRED, DocumentState.EXTRACT_FAILED);
         when(repository.findVisibleInvoices(states, true, 99L, null, null, null, PageRequest.of(0, 8)))

@@ -23,6 +23,7 @@ import org.involens_be.common.DocumentState;
 import org.involens_be.exception.NoInvoicesToExportException;
 import org.involens_be.exception.InvoiceExportException;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -151,6 +152,50 @@ class ExportJobServiceTest {
         assertEquals(47L, result.getPendingReview());
     }
 
+    /** Returns more than five preview rows with the same values and order as the Excel download. */
+    @Test
+    void previewReturnsAllSelectedInvoicesInExcelOrder() throws Exception {
+        var request = new ExportPreviewRequest();
+        request.setDateFrom("2026-09-01");
+        request.setDateTo("2026-09-30");
+        var rows = new java.util.ArrayList<ExportJobRepository.InvoiceExportRow>();
+        for (int index = 1; index <= 6; index++) {
+            rows.add(new ExportJobRepository.InvoiceExportRow(UUID.randomUUID(), "000" + index,
+                    LocalDate.of(2026, 9, index), "Supplier " + index, null, null,
+                    new BigDecimal("125000.50"), "VND",
+                    index % 2 == 0 ? DocumentState.REVIEW_REQUIRED : DocumentState.EXTRACT_SUCCESS, null));
+        }
+        var from = LocalDate.of(2026, 9, 1);
+        var to = LocalDate.of(2026, 9, 30);
+        when(exportJobs.countPreview(from, to, false, false, true, 9L))
+                .thenReturn(new ExportJobRepository.PreviewCounts(6L, 3L, 3L));
+        when(exportJobs.findExportBatch(from, to, false, false, true, 9L, Pageable.unpaged()))
+                .thenReturn(rows);
+        when(exportJobs.findExportBatch(from, to, false, false, true, 9L, PageRequest.of(0, 1000)))
+                .thenReturn(rows);
+        when(exportJobs.findExportBatch(from, to, false, false, true, 9L, PageRequest.of(1, 1000)))
+                .thenReturn(List.of());
+
+        var preview = service.preview(request, 9L, UserRole.MANAGER);
+
+        assertEquals(6, preview.getItems().size());
+        try (var workbook = new XSSFWorkbook(new ByteArrayInputStream(service.exportExcel(request, 9L, UserRole.MANAGER)))) {
+            var sheet = workbook.getSheetAt(0);
+            assertEquals(sheet.getLastRowNum(), preview.getItems().size());
+            for (int index = 0; index < preview.getItems().size(); index++) {
+                var item = preview.getItems().get(index);
+                var cells = sheet.getRow(index + 1);
+                assertEquals(cells.getCell(1).getStringCellValue(), item.getInvoiceNumber());
+                assertEquals(cells.getCell(3).getStringCellValue(), item.getSellerName());
+                assertEquals(cells.getCell(2).getLocalDateTimeCellValue().toLocalDate(), item.getInvoiceDate());
+                assertEquals(cells.getCell(6).getNumericCellValue(), item.getTotalAmount().doubleValue());
+                assertEquals(rows.get(index).state() == DocumentState.EXTRACT_SUCCESS
+                        ? ExportPreviewRequest.Status.APPROVED : ExportPreviewRequest.Status.PENDING_REVIEW,
+                        item.getStatus());
+            }
+        }
+    }
+
     /** Restricts an employee's extracted-success preview and hides the pending-review group. */
     @Test
     void approvedStatusUsesEmployeeScopeAndNullPendingCount() {
@@ -164,6 +209,30 @@ class ExportJobServiceTest {
         assertEquals(4L, result.getTotalInvoices());
         assertEquals(4L, result.getApproved());
         assertNull(result.getPendingReview());
+        verify(exportJobs).findExportBatch(null, null, true, false, false, 12L, Pageable.unpaged());
+    }
+
+    /** Keeps missing invoice values and limits pending previews to the employee's export scope. */
+    @Test
+    void pendingPreviewPreservesMissingInvoiceValues() {
+        var request = new ExportPreviewRequest();
+        request.setStatus(ExportPreviewRequest.Status.PENDING_REVIEW);
+        when(exportJobs.countPreview(null, null, false, true, false, 12L))
+                .thenReturn(new ExportJobRepository.PreviewCounts(1L, 0L, 1L));
+        when(exportJobs.findExportBatch(null, null, false, true, false, 12L, Pageable.unpaged()))
+                .thenReturn(List.of(new ExportJobRepository.InvoiceExportRow(UUID.randomUUID(), null,
+                        null, null, null, null, null, "VND", DocumentState.REVIEW_REQUIRED, null)));
+
+        var result = service.preview(request, 12L, UserRole.EMPLOYEE);
+
+        assertNull(result.getApproved());
+        assertEquals(1L, result.getPendingReview());
+        var item = result.getItems().getFirst();
+        assertNull(item.getInvoiceNumber());
+        assertNull(item.getSellerName());
+        assertNull(item.getInvoiceDate());
+        assertNull(item.getTotalAmount());
+        assertEquals(ExportPreviewRequest.Status.PENDING_REVIEW, item.getStatus());
     }
 
     /** Rejects a reversed invoice-date range without querying invoice aggregates. */
@@ -190,6 +259,7 @@ class ExportJobServiceTest {
         var result = service.preview(request, 12L, UserRole.EMPLOYEE);
 
         assertEquals(0L, result.getTotalInvoices());
+        assertTrue(result.getItems().isEmpty());
         verify(exportJobs).countPreview(null, null, false, false, false, 12L);
     }
 }

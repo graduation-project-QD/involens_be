@@ -393,7 +393,7 @@ public class DocumentService {
         }
     }
 
-    /** Combines mandatory owner/active restrictions with optional AND filters and Vietnam calendar-day bounds. */
+    /** Combines visibility and date filters with filename filtering and filename-or-uploader keyword matching. */
     private Specification<DocumentEntity> filters(DocumentListRequest request, Long ownerId, UserRole role) {
         log.debug("Building role-scoped document filters. ownerId={}, role={}", ownerId, role);
         OffsetDateTime from = request.getDate_from() == null ? null
@@ -416,10 +416,20 @@ public class DocumentService {
             if (request.getCurrent_state() != null) {
                 predicates.add(cb.equal(root.get("currentState"), request.getCurrent_state()));
             }
-            for (String term : new String[]{request.getFilename(), request.getQ()}) {
-                if (term != null && !term.isBlank()) {
-                    predicates.add(cb.like(cb.lower(root.get("originalFilename")), containsPattern(term), '!'));
-                }
+            if (request.getFilename() != null && !request.getFilename().isBlank()) {
+                predicates.add(cb.like(cb.lower(root.get("originalFilename")), containsPattern(request.getFilename()), '!'));
+            }
+            if (request.getQ() != null && !request.getQ().isBlank()) {
+                log.debug("Applying document keyword search across filename and uploader name");
+                String pattern = containsPattern(request.getQ());
+                var uploaderMatch = query.subquery(Long.class);
+                var uploader = uploaderMatch.from(UserEntity.class);
+                uploaderMatch.select(uploader.get("id")).where(
+                        cb.equal(uploader.get("id"), root.get("uploadedById")),
+                        cb.like(cb.lower(uploader.get("fullName")), pattern, '!'));
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("originalFilename")), pattern, '!'),
+                        cb.exists(uploaderMatch)));
             }
             if (from != null) {
                 predicates.add(cb.greaterThanOrEqualTo(root.get("uploadedAt"), from));
@@ -431,9 +441,9 @@ public class DocumentService {
         };
     }
 
-    /** Escapes SQL wildcard characters so filename searches match the submitted text literally. */
+    /** Escapes SQL wildcard characters so filename and uploader searches match the submitted text literally. */
     private String containsPattern(String term) {
-        log.debug("Preparing literal case-insensitive filename search");
+        log.debug("Preparing literal case-insensitive document search");
         return "%" + term.trim().toLowerCase(Locale.ROOT)
                 .replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
     }

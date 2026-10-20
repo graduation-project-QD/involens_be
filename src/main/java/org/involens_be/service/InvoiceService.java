@@ -31,7 +31,7 @@ public class InvoiceService {
         List<DocumentState> states = request.getCurrent_state() == null
                 ? List.of(DocumentState.EXTRACT_SUCCESS, DocumentState.REVIEW_REQUIRED, DocumentState.EXTRACT_FAILED)
                 : List.of(request.getCurrent_state());
-        var result = invoices.findVisibleInvoices(states, role == UserRole.MANAGER, userId, filenamePattern(request.getQ()),
+        var result = invoices.findVisibleInvoices(states, role == UserRole.MANAGER, userId, keywordPattern(request.getQ()),
                 request.getDate_from(), request.getDate_to(), PageRequest.of(request.getPage() - 1, request.getPage_size()));
         var items = result.getContent().stream().map(this::toListItem).toList();
         log.info("Extracted invoices loaded. userId={}, total={}, returned={}", userId, result.getTotalElements(), items.size());
@@ -39,9 +39,9 @@ public class InvoiceService {
                 .page(request.getPage()).pageSize(request.getPage_size()).build();
     }
 
-    /** Prepares a literal case-insensitive filename substring, ignoring an omitted or blank search. */
-    private String filenamePattern(String query) {
-        log.debug("Preparing invoice filename search. filtered={}", query != null && !query.isBlank());
+    /** Prepares a literal substring for filename, uploader and supplier matching, ignoring blank keywords. */
+    private String keywordPattern(String query) {
+        log.debug("Preparing invoice filename, uploader and supplier search. filtered={}", query != null && !query.isBlank());
         if (query == null || query.isBlank()) {
             return null;
         }

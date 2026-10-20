@@ -35,6 +35,8 @@ public class InvoiceController {
     @Operation(summary = "List extracted invoice outcomes",
             description = "Optional current_state: EXTRACT_SUCCESS, REVIEW_REQUIRED or EXTRACT_FAILED. "
                     + "Omit it for all three. Managers see all active documents; employees see their own. "
+                    + "q matches the filename, uploader full name or supplier name using literal case-insensitive substrings. "
+                    + "Other filters are combined with AND. "
                     + "Defaults: page=1, page_size=8 (maximum 100). Newest uploads first, then document ID descending. "
                     + "Failed outcomes may have null invoice fields and ID; document_id is always present.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))

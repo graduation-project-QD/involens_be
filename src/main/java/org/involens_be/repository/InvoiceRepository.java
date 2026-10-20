@@ -20,7 +20,7 @@ public interface InvoiceRepository extends JpaRepository<InvoiceEntity, UUID> {
     /** Finds the invoice populated from a specific AI extraction result. */
     Optional<InvoiceEntity> findByExtractionResultId(UUID extractionResultId);
 
-    /** Pages active extraction outcomes, retaining failed documents without an invoice and applying ownership scope. */
+    /** Pages visible active outcomes matching filename, uploader or supplier, retaining missing invoice data. */
     @Query(value = """
             select new org.involens_be.repository.InvoiceRepository$InvoiceListRow(
                 i.id, d.id, d.originalFilename, i.sellerName, i.invoiceNumber, i.invoiceDate,
@@ -31,23 +31,30 @@ public interface InvoiceRepository extends JpaRepository<InvoiceEntity, UUID> {
             where d.status = org.involens_be.common.CommonStatus.ACTIVE
               and d.currentState in :states
               and (:manager = true or d.uploadedById = :userId)
-              and (:filenamePattern is null or lower(d.originalFilename) like :filenamePattern escape '!')
+              and (:keywordPattern is null
+                    or lower(d.originalFilename) like :keywordPattern escape '!'
+                    or lower(u.fullName) like :keywordPattern escape '!'
+                    or lower(i.sellerName) like :keywordPattern escape '!')
               and (:dateFrom is null or i.invoiceDate >= :dateFrom)
               and (:dateTo is null or i.invoiceDate <= :dateTo)
             order by d.uploadedAt desc, d.id desc
             """, countQuery = """
             select count(d.id) from DocumentEntity d
             left join InvoiceEntity i on i.documentId = d.id
+            left join UserEntity u on u.id = d.uploadedById
             where d.status = org.involens_be.common.CommonStatus.ACTIVE
               and d.currentState in :states
               and (:manager = true or d.uploadedById = :userId)
-              and (:filenamePattern is null or lower(d.originalFilename) like :filenamePattern escape '!')
+              and (:keywordPattern is null
+                    or lower(d.originalFilename) like :keywordPattern escape '!'
+                    or lower(u.fullName) like :keywordPattern escape '!'
+                    or lower(i.sellerName) like :keywordPattern escape '!')
               and (:dateFrom is null or i.invoiceDate >= :dateFrom)
               and (:dateTo is null or i.invoiceDate <= :dateTo)
             """)
     Page<InvoiceListRow> findVisibleInvoices(@Param("states") List<DocumentState> states,
             @Param("manager") boolean manager, @Param("userId") Long userId,
-            @Param("filenamePattern") String filenamePattern, @Param("dateFrom") LocalDate dateFrom,
+            @Param("keywordPattern") String keywordPattern, @Param("dateFrom") LocalDate dateFrom,
             @Param("dateTo") LocalDate dateTo, Pageable pageable);
 
     /** Carries nullable invoice data alongside the document's authoritative processing state. */

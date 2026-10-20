@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.involens_be.common.DocumentState;
 import org.involens_be.exception.InvoiceExportException;
 import org.involens_be.exception.NoInvoicesToExportException;
 import java.io.IOException;
@@ -51,8 +53,8 @@ public class ExportJobService {
         }
     }
 
-    /** Builds invoice counts for an export preview within the caller's role-based visibility scope. */
-    @Transactional(readOnly = true)
+    /** Returns invoice counts and all Excel-selected rows within the caller's visibility scope. */
+    @Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
     public ExportPreviewResponse preview(ExportPreviewRequest request, Long userId, UserRole role) {
         log.info("Building export preview. userId={}, role={}, dateFrom={}, dateTo={}, status={}",
                 userId, role, request.getDateFrom(), request.getDateTo(), request.getStatus());
@@ -64,14 +66,33 @@ public class ExportJobService {
         boolean pendingOnly = request.getStatus() == ExportPreviewRequest.Status.PENDING_REVIEW;
         var counts = exportJobRepository.countPreview(dateFrom, dateTo,
                 approvedOnly, pendingOnly, manager, userId);
+        var items = exportJobRepository.findExportBatch(dateFrom, dateTo,
+                        approvedOnly, pendingOnly, manager, userId, Pageable.unpaged())
+                .stream().map(this::toPreviewItem).toList();
         boolean includeApproved = request.getStatus() != ExportPreviewRequest.Status.PENDING_REVIEW;
         boolean includePending = request.getStatus() != ExportPreviewRequest.Status.APPROVED;
         var response = ExportPreviewResponse.builder()
                 .totalInvoices(counts.totalInvoices())
                 .approved(includeApproved ? counts.approved() : null)
                 .pendingReview(includePending ? counts.pendingReview() : null)
+                .items(items)
                 .build();
+        log.info("Export preview completed. userId={}, totalInvoices={}, returnedItems={}",
+                userId, response.getTotalInvoices(), items.size());
         return response;
+    }
+
+    /** Maps an Excel-selected invoice to the fields displayed in the scrollable preview. */
+    private ExportPreviewResponse.Item toPreviewItem(ExportJobRepository.InvoiceExportRow invoice) {
+        log.trace("Mapping invoice for export preview. invoiceId={}", invoice.id());
+        return ExportPreviewResponse.Item.builder()
+                .invoiceNumber(invoice.invoiceNumber())
+                .sellerName(invoice.sellerName())
+                .invoiceDate(invoice.invoiceDate())
+                .totalAmount(invoice.totalAmount())
+                .status(invoice.state() == DocumentState.EXTRACT_SUCCESS
+                        ? ExportPreviewRequest.Status.APPROVED : ExportPreviewRequest.Status.PENDING_REVIEW)
+                .build();
     }
 
     /** Ensures the inclusive invoice-date range is chronologically valid when both bounds are supplied. */

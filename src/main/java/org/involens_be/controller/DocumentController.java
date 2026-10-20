@@ -99,7 +99,8 @@ public class DocumentController {
 
     /** Returns a filtered page of active documents uploaded by the bearer token's user. */
     @Operation(summary = "List my active documents",
-            description = "Optional filters are combined with AND. filename and q are case-insensitive filename searches. "
+            description = "Optional filters are combined with AND. filename searches the filename; q matches the filename "
+                    + "or uploader full name. Both use literal case-insensitive substring matching. "
                     + "Dates use YYYY-MM-DD in Asia/Ho_Chi_Minh, inclusive of both days. "
                     + "Empty filters are ignored. Defaults: page=1, page_size=8 (maximum 100). "
                     + "Sorted by uploaded_at descending, then id descending.",
