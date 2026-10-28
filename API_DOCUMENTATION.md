@@ -628,6 +628,9 @@ Không có body.
 
 | Query | Kiểu | Mặc định/validation |
 |---|---|---|
+| q | string | Optional; case-insensitive literal substring of filename or uploader full name; blank ignored |
+| date_from | date | Optional YYYY-MM-DD; upload date from 00:00 Asia/Ho_Chi_Minh, inclusive |
+| date_to | date | Optional YYYY-MM-DD; upload date through the end of the day Asia/Ho_Chi_Minh; must not precede date_from |
 | status | enum | Tùy chọn: PENDING, COMPLETED, CANCELLED |
 | page | integer | 1; tối thiểu 1 |
 | page_size | integer | 20; từ 1 đến 100 |
@@ -635,7 +638,7 @@ Không có body.
 Chỉ lấy task của tài liệu ACTIVE đang REVIEW_REQUIRED, dù có lọc status COMPLETED/CANCELLED. Sắp xếp priority tăng dần, rồi createdAt tăng dần. Task của tài liệu vừa được PATCH chuyển EXTRACT_SUCCESS không còn xuất hiện ở danh sách này.
 
 ```bash
-curl --request GET 'http://localhost:8080/api/v1/review-tasks?status=PENDING&page=1&page_size=20' \
+curl --request GET 'http://localhost:8080/api/v1/review-tasks?status=PENDING&q=invoice&date_from=2026-10-01&date_to=2026-10-27&page=1&page_size=20' \
   --header 'Authorization: Bearer <ACCESS_TOKEN>' \
   --header 'Accept: application/json'
 ```

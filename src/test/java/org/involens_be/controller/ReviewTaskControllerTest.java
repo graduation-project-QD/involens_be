@@ -17,6 +17,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
+import java.time.LocalDate;
+import org.involens_be.exception.InvalidDocumentFilterException;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.*;
@@ -55,18 +57,23 @@ class ReviewTaskControllerTest {
         when(service.listReviewTasks(any(), eq(12L), eq(UserRole.EMPLOYEE))).thenAnswer(invocation -> {
             org.involens_be.dto.request.ReviewTaskListRequest request = invocation.getArgument(0);
             org.junit.jupiter.api.Assertions.assertEquals(ReviewStatus.PENDING, request.getStatus());
+            org.junit.jupiter.api.Assertions.assertEquals("receipt", request.getQ());
+            org.junit.jupiter.api.Assertions.assertEquals(LocalDate.parse("2026-10-01"), request.getDate_from());
+            org.junit.jupiter.api.Assertions.assertEquals(LocalDate.parse("2026-10-27"), request.getDate_to());
             var item = ReviewTaskListItemResponse.builder().id(taskId).documentId(documentId).build();
             return ReviewTaskListResponse.builder().items(List.of(item)).total(1)
                     .page(request.getPage()).pageSize(request.getPage_size()).build();
         });
 
         mvc.perform(get("/api/v1/review-tasks").param("status", "PENDING")
-                        .param("page", "1").param("page_size", "20"))
+                        .param("page", "1").param("page_size", "20")
+                        .param("q", "receipt").param("date_from", "2026-10-01").param("date_to", "2026-10-27"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value(0))
                 .andExpect(jsonPath("$.data.items").isArray())
                 .andExpect(jsonPath("$.data.items[0].id").value(taskId.toString()))
                 .andExpect(jsonPath("$.data.items[0].document_id").value(documentId.toString()))
+                .andExpect(jsonPath("$.data.items[0].priority").doesNotExist())
                 .andExpect(jsonPath("$.data.page").value(1))
                 .andExpect(jsonPath("$.data.page_size").value(20));
     }
@@ -78,6 +85,20 @@ class ReviewTaskControllerTest {
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(1));
         mvc.perform(get("/api/v1/review-tasks").param("page_size", "101"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(1));
+        mvc.perform(get("/api/v1/review-tasks").param("date_from", "2026-02-30"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(1));
         verifyNoInteractions(service);
+    }
+
+    /** Returns the existing validation envelope when the service rejects a reversed upload-date range. */
+    @Test
+    void reversedUploadDateRangeReturnsBadRequest() throws Exception {
+        when(service.listReviewTasks(any(), eq(12L), eq(UserRole.EMPLOYEE)))
+                .thenThrow(new InvalidDocumentFilterException("date_from must not be after date_to"));
+
+        mvc.perform(get("/api/v1/review-tasks").param("date_from", "2026-10-02")
+                        .param("date_to", "2026-10-01"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 }

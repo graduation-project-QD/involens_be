@@ -3,6 +3,7 @@ package org.involens_be.service;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import io.minio.MinioClient;
 import lombok.extern.slf4j.Slf4j;
 import org.involens_be.common.CommonStatus;
 import org.involens_be.common.DocumentState;
@@ -12,6 +13,8 @@ import org.involens_be.repository.DocumentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -63,6 +66,10 @@ class ExtractionMessageServiceTest {
         ReflectionTestUtils.setField(extractionMessageService, "enabled", true);
         ReflectionTestUtils.setField(extractionMessageService, "extractExchange", "test-extraction");
         ReflectionTestUtils.setField(extractionMessageService, "extractRoutingKey", "test-extract");
+        ReflectionTestUtils.setField(extractionMessageService, "bucket", "involens-documents");
+        ReflectionTestUtils.setField(extractionMessageService, "publicMinioClient",
+                new org.involens_be.config.AppConfig().publicMinioClient(
+                        "http://localhost:9000", "test-access", "test-secret", "us-east-1"));
         document = DocumentEntity.builder()
                 .id(UUID.randomUUID())
                 .originalFilename("receipt.jpg")
@@ -75,9 +82,11 @@ class ExtractionMessageServiceTest {
     }
 
     /** Verifies the AI payload is published before the guarded state update while the upload response snapshot stays unchanged. */
-    @Test
-    void sendExtractPublishesDocumentBeforeMarkingProcessing() {
+    @ParameterizedTest
+    @ValueSource(strings = {"jpg", "pdf"})
+    void sendExtractPublishesDocumentBeforeMarkingProcessing(String extension) {
         log.info("Testing processing transition after successful extraction dispatch");
+        document.setObjectKey("2026/10/receipt." + extension);
         when(documentRepository.updateDispatchStateIfMatching(
                 document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null)).thenReturn(1);
 
@@ -100,11 +109,56 @@ class ExtractionMessageServiceTest {
         JsonObject payload = JsonParser.parseString(
                 new String(message.getBody(), StandardCharsets.UTF_8)).getAsJsonObject();
         assertEquals(document.getId().toString(), payload.get("id").getAsString());
-        assertEquals(document.getObjectKey(), payload.get("fileName").getAsString());
+        assertEquals(2, payload.size());
+        assertFalse(payload.has("fileName"));
+        String url = payload.get("url").getAsString();
+        assertTrue(url.startsWith("http://localhost:9000/involens-documents/" + document.getObjectKey() + "?"));
+        assertTrue(url.contains("X-Amz-Expires=3600"));
+        assertTrue(url.contains("X-Amz-Signature="));
         assertEquals(CommonStatus.ACTIVE, document.getStatus());
         assertEquals(UploadStatus.UPLOADED, document.getUploadStatus());
         assertEquals(DocumentState.UPLOADED, document.getCurrentState());
         log.info("Successful extraction dispatch transition test completed");
+    }
+
+    /** Verifies signing failures exhaust dispatch attempts without sending an unusable request to AI. */
+    @Test
+    void sendExtractRecordsFailureWhenUrlSigningFails() throws Exception {
+        log.info("Testing extraction dispatch when download URL signing fails");
+        MinioClient signer = org.mockito.Mockito.mock(MinioClient.class);
+        ReflectionTestUtils.setField(extractionMessageService, "publicMinioClient", signer);
+        when(signer.getPresignedObjectUrl(any())).thenThrow(new java.io.IOException("signing failure"));
+
+        assertDoesNotThrow(() -> extractionMessageService.sendExtract(document));
+
+        verify(signer, times(4)).getPresignedObjectUrl(any());
+        verifyNoInteractions(rabbitTemplate);
+        verify(documentRepository).updateDispatchStateIfMatching(
+                document.getId(), DocumentState.UPLOADED, DocumentState.PENDING_FAILURE,
+                ExtractionMessageService.DISPATCH_FAILED_CODE, ExtractionMessageService.DISPATCH_FAILED_MESSAGE);
+        log.info("URL signing failure dispatch test completed");
+    }
+
+    /** Verifies a transient signing failure is retried before publishing a usable download URL. */
+    @Test
+    void publishExtractRetriesUrlSigningFailure() throws Exception {
+        log.info("Testing extraction dispatch recovery after a download URL signing failure");
+        MinioClient signer = org.mockito.Mockito.mock(MinioClient.class);
+        ReflectionTestUtils.setField(extractionMessageService, "publicMinioClient", signer);
+        String url = "http://localhost:9000/involens-documents/receipt.jpg?signature=test";
+        when(signer.getPresignedObjectUrl(any()))
+                .thenThrow(new java.io.IOException("temporary signing failure")).thenReturn(url);
+
+        assertTrue(extractionMessageService.publishExtract(document));
+
+        verify(signer, times(2)).getPresignedObjectUrl(any());
+        ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
+        verify(rabbitTemplate).send(eq("test-extraction"), eq("test-extract"), messageCaptor.capture());
+        JsonObject payload = JsonParser.parseString(
+                new String(messageCaptor.getValue().getBody(), StandardCharsets.UTF_8)).getAsJsonObject();
+        assertEquals(url, payload.get("url").getAsString());
+        verifyNoInteractions(documentRepository);
+        log.info("URL signing retry recovery test completed");
     }
 
     /** Verifies a temporary publish failure is retried and processing is recorded only after the successful retry. */

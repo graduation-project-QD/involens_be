@@ -1,6 +1,9 @@
 package org.involens_be.service;
 
 import com.google.gson.Gson;
+import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.MinioClient;
+import io.minio.http.Method;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.involens_be.common.DocumentState;
@@ -16,6 +19,7 @@ import org.springframework.util.StringUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /** Sends extraction requests and receives extraction results from RabbitMQ. */
 @Slf4j(topic = "EXTRACTION-MESSAGE-SERVICE")
@@ -41,8 +45,15 @@ public class ExtractionMessageService {
     @Value("${app.rabbitmq.extract.routing-key:}")
     private String extractRoutingKey;
 
+    @Value("${app.minio.bucket}")
+    private String bucket;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("publicMinioClient")
+    private MinioClient publicMinioClient;
+
     /**
-     * Sends the uploaded document ID and storage key to AI, retrying failed sends up to three times.
+     * Sends the uploaded document ID and signed download URL to AI, retrying failed sends up to three times.
      * Records PROCESSING on success or PENDING_FAILURE on dispatch failure without resending on a database failure.
      */
     public void sendExtract(DocumentEntity document) {
@@ -54,7 +65,8 @@ public class ExtractionMessageService {
     }
 
     /**
-     * Publishes the document ID and existing MinIO storage key to AI with up to four send attempts.
+     * Publishes the document ID and an hour-long signed image or PDF URL to AI with up to four attempts.
+     * Generates a fresh GET URL on each attempt, treating signing errors as dispatch failures.
      * Returns whether RabbitMQ dispatch completed without a send exception, leaving database updates to the caller.
      */
     public boolean publishExtract(DocumentEntity document) {
@@ -65,9 +77,14 @@ public class ExtractionMessageService {
         }
         for (int attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
             try {
+                log.debug("Creating extraction download URL. documentId={}", document.getId());
+                String url = publicMinioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+                        .method(Method.GET).bucket(bucket).object(document.getObjectKey())
+                        .expiry(1, TimeUnit.HOURS).build());
+                log.debug("Extraction download URL created. documentId={}", document.getId());
                 SendDocumentExtract payload = SendDocumentExtract.builder()
                         .id(document.getId())
-                        .fileName(document.getObjectKey())
+                        .url(url)
                         .build();
                 MessageProperties properties = new MessageProperties();
                 properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);

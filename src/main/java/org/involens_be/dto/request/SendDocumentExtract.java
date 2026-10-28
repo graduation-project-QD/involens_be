@@ -6,14 +6,14 @@ import lombok.Getter;
 
 import java.util.UUID;
 
-/** Carries the document ID and object storage key to the AI extraction worker. */
+/** Carries the document ID and signed download URL to the AI extraction worker. */
 @Getter
 @Builder
 public class SendDocumentExtract {
     @Expose
     private UUID id;
 
-    /** Object storage key used by the worker to retrieve the document. */
+    /** Hour-long signed GET URL used by the worker to download the image or PDF. */
     @Expose
-    private String fileName;
+    private String url;
 }

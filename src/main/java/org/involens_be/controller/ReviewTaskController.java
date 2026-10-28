@@ -35,11 +35,13 @@ public class ReviewTaskController {
     /** Lists review tasks visible to the authenticated employee or manager. */
     @Operation(summary = "List visible invoice review tasks",
             description = "Employees see tasks for their uploads; managers see all tasks. "
+                    + "Optional q matches filename or uploader, ignoring case. "
+                    + "date_from/date_to filter upload dates inclusively in Asia/Ho_Chi_Minh. "
                     + "Defaults: page=1 and page_size=20 (maximum 100).",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Review-task page returned, possibly empty"),
-            @ApiResponse(responseCode = "400", description = "Invalid status or pagination"),
+            @ApiResponse(responseCode = "400", description = "Invalid status, upload-date range or pagination"),
             @ApiResponse(responseCode = "401", description = "JWT is missing or invalid")
     })
     @GetMapping

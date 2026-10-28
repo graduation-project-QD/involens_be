@@ -51,8 +51,4 @@ public class ReviewTaskListItemResponse {
     @SerializedName("status")
     private ReviewStatus status;
 
-    @Expose
-    @JsonProperty("priority")
-    @SerializedName("priority")
-    private Integer priority;
 }
