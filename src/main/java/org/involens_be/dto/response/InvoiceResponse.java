@@ -18,6 +18,7 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public class InvoiceResponse {
     @Expose private UUID id;
+    @Expose private Long version;
     @Expose @JsonProperty("document_id") @SerializedName("document_id") private UUID documentId;
     @Expose @JsonProperty("extraction_result_id") @SerializedName("extraction_result_id")
     private UUID extractionResultId;

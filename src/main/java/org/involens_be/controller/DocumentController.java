@@ -13,6 +13,9 @@ import org.involens_be.dto.response.DocumentUploadItemResponse;
 import org.involens_be.dto.response.DocumentUploadResponse;
 import org.involens_be.dto.response.DocumentSummaryResponse;
 import org.involens_be.exception.DocumentRetryException;
+import org.involens_be.exception.InvoiceConflictException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import jakarta.persistence.OptimisticLockException;
 import org.involens_be.config.OpenApiConfig;
 import org.involens_be.service.DocumentService;
 import org.involens_be.service.DocumentUploadService;
@@ -166,16 +169,18 @@ public class DocumentController {
 
     /**
      * Applies human-reviewed invoice corrections and completes the extraction review workflow.
-     * An empty JSON object confirms an existing invoice without changing its extracted fields.
+     * A body containing only version confirms an existing invoice without changing its extracted fields.
      */
     @Operation(summary = "Update extracted invoice",
-            description = "Partially updates invoice fields, or confirms an existing AI result with an empty object.",
+            description = "Partially updates invoice fields, or confirms an existing AI result with version only. "
+                    + "Existing invoices require the version returned by GET extraction-result; stale edits return 409.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Invoice updated and review completed"),
             @ApiResponse(responseCode = "400", description = "Invoice fields are invalid"),
             @ApiResponse(responseCode = "401", description = "JWT is missing or invalid"),
-            @ApiResponse(responseCode = "404", description = "Document or extraction result not found")
+            @ApiResponse(responseCode = "404", description = "Document or extraction result not found"),
+            @ApiResponse(responseCode = "409", description = "Invoice has been edited by another user")
     })
     @PatchMapping("/{documentId}/extraction-result")
     public BaseResponse<UpdateExtractionResultResponse> updateExtractionResult(
@@ -184,9 +189,14 @@ public class DocumentController {
             @Parameter(hidden = true) @AuthenticationPrincipal Jwt jwt) {
         Long reviewerId = readUserId(jwt);
         UserRole role = readRole(jwt);
-        var response = documentService.updateExtractionResult(documentId, request, reviewerId, role);
-        log.info("Extracted invoice update completed. documentId={}, reviewerId={}", documentId, reviewerId);
-        return BaseResponse.success(response);
+        try {
+            var response = documentService.updateExtractionResult(documentId, request, reviewerId, role);
+            log.info("Extracted invoice update completed. documentId={}, reviewerId={}", documentId, reviewerId);
+            return BaseResponse.success(response);
+        } catch (OptimisticLockingFailureException | OptimisticLockException exception) {
+            log.warn("Invoice transaction conflicted. documentId={}, reviewerId={}", documentId, reviewerId, exception);
+            throw new InvoiceConflictException("Hóa đơn đã được người khác chỉnh sửa");
+        }
     }
 
     /**

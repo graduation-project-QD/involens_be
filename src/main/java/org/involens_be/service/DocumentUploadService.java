@@ -24,6 +24,7 @@ import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
@@ -47,13 +48,12 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DocumentUploadService {
 
-    private static final long MAX_FILE_SIZE_BYTES = 10L * 1024 * 1024;
     private static final String UNSUPPORTED_FORMAT_CODE = "UNSUPPORTED_FORMAT";
     private static final String FILE_TOO_LARGE_CODE = "FILE_TOO_LARGE";
     private static final String EMPTY_FILE_CODE = "EMPTY_FILE";
     private static final String DUPLICATE_FILE_CODE = "DUPLICATE_FILE";
     private static final String DUPLICATE_FILE_MESSAGE = "Tệp có nội dung trùng với tài liệu đã được tải lên";
-    private static final String SUPPORTED_FILES_MESSAGE = "Chỉ hỗ trợ JPG, JPEG, PNG, PDF (tối đa 10MB)";
+    private static final String SUPPORTED_FILES_MESSAGE = "Chỉ hỗ trợ JPG, JPEG, PNG, PDF (tối đa %s)";
     private static final Map<String, Set<String>> SUPPORTED_TYPES = Map.of(
             "jpg", Set.of("image/jpeg"),
             "jpeg", Set.of("image/jpeg"),
@@ -68,6 +68,9 @@ public class DocumentUploadService {
 
     @Value("${app.minio.bucket}")
     private String bucket;
+
+    @Value("${app.upload.max-file-size:10MB}")
+    private String maxFileSize = "10MB";
 
     /**
      * Resends a visible active document's existing file to AI and records PROCESSING or PENDING_FAILURE.
@@ -235,15 +238,15 @@ public class DocumentUploadService {
             log.warn("Document validation failed because the file is empty. filename={}", originalFilename);
             return failedDocument(builder, EMPTY_FILE_CODE, "Tệp tải lên không được để trống");
         }
-        if (file.getSize() > MAX_FILE_SIZE_BYTES) {
-            log.warn("Document validation failed because the file exceeds 10MB. filename={}, fileSize={}",
-                    originalFilename, file.getSize());
-            return failedDocument(builder, FILE_TOO_LARGE_CODE, SUPPORTED_FILES_MESSAGE);
+        if (file.getSize() > DataSize.parse(maxFileSize).toBytes()) {
+            log.warn("Document validation failed because the file exceeds the configured limit. filename={}, fileSize={}, limit={}",
+                    originalFilename, file.getSize(), maxFileSize);
+            return failedDocument(builder, FILE_TOO_LARGE_CODE, SUPPORTED_FILES_MESSAGE.formatted(maxFileSize));
         }
         if (!isSupported(originalFilename, file.getContentType())) {
             log.warn("Document validation failed because the format is unsupported. filename={}, mimeType={}",
                     originalFilename, file.getContentType());
-            return failedDocument(builder, UNSUPPORTED_FORMAT_CODE, SUPPORTED_FILES_MESSAGE);
+            return failedDocument(builder, UNSUPPORTED_FORMAT_CODE, SUPPORTED_FILES_MESSAGE.formatted(maxFileSize));
         }
 
         log.debug("Document passed upload validation. filename={}", originalFilename);

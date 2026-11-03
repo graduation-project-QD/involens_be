@@ -15,6 +15,7 @@ import java.util.List;
 @Data
 @Slf4j
 public class UpdateInvoiceExtractionRequest {
+    private Long version;
         private String sellerName;
     private String sellerAddress;
     private String invoiceNumber;

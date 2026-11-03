@@ -49,6 +49,67 @@ class ExtractionResultServiceTest {
     @Mock private org.involens_be.repository.InvoiceItemRepository invoiceItems;
     private DocumentService service;
 
+    /** Rejects stale and invalid client versions before invoice fields or review state are changed. */
+    @Test
+    void rejectsStaleMissingAndNegativeVersionsWithoutWrites() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing stale and invalid invoice versions");
+        UUID documentId = UUID.randomUUID();
+        InvoiceEntity invoice = prepareVersionedInvoice(documentId);
+        for (Long version : new Long[] {null, -1L, 1L}) {
+            var request = new UpdateInvoiceExtractionRequest();
+            request.setVersion(version);
+            request.setSellerName("Overwritten seller");
+            if (version != null && version >= 0) {
+                var exception = assertThrows(org.involens_be.exception.InvoiceConflictException.class,
+                        () -> service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE));
+                assertEquals("Hóa đơn đã được người khác chỉnh sửa", exception.getMessage());
+            } else {
+                assertThrows(InvalidInvoiceUpdateException.class,
+                        () -> service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE));
+            }
+        }
+        assertEquals("Original seller", invoice.getSellerName());
+        verify(invoices, never()).saveAndFlush(any());
+        verifyNoInteractions(invoiceItems, reviewTasks, statusNotifications);
+    }
+
+    /** Converts both persistence exception forms into a business conflict before completing review. */
+    @Test
+    void concurrentFlushFailureBecomesInvoiceConflict() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing concurrent invoice flush failures");
+        UUID documentId = UUID.randomUUID();
+        InvoiceEntity invoice = prepareVersionedInvoice(documentId);
+        var request = new UpdateInvoiceExtractionRequest();
+        request.setVersion(2L);
+        when(invoices.saveAndFlush(invoice)).thenThrow(
+                new org.springframework.orm.ObjectOptimisticLockingFailureException(InvoiceEntity.class, invoice.getId()),
+                new jakarta.persistence.OptimisticLockException("Concurrent edit"));
+        for (int attempt = 0; attempt < 2; attempt++) {
+            var exception = assertThrows(org.involens_be.exception.InvoiceConflictException.class,
+                    () -> service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE));
+            assertEquals("Hóa đơn đã được người khác chỉnh sửa", exception.getMessage());
+        }
+        verifyNoInteractions(invoiceItems, reviewTasks, statusNotifications);
+        verify(documents, never()).save(any());
+        verify(extractionResults, never()).save(any());
+    }
+
+    /** Makes an existing invoice visible with the version a reviewer must submit when saving. */
+    private InvoiceEntity prepareVersionedInvoice(UUID documentId) {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Preparing versioned invoice fixture");
+        UUID extractionId = UUID.randomUUID();
+        when(documents.findByIdAndUploadedByIdAndStatus(documentId, 12L, CommonStatus.ACTIVE))
+                .thenReturn(Optional.of(DocumentEntity.builder().id(documentId)
+                        .currentState(DocumentState.REVIEW_REQUIRED).build()));
+        when(extractionResults.findByDocumentId(documentId)).thenReturn(Optional.of(
+                ExtractionResultEntity.builder().id(extractionId).documentId(documentId)
+                        .aiStatus(AiStatus.REVIEW_REQUIRED).build()));
+        InvoiceEntity invoice = InvoiceEntity.builder().id(UUID.randomUUID()).version(2L)
+                .sellerName("Original seller").build();
+        when(invoices.findByExtractionResultId(extractionId)).thenReturn(Optional.of(invoice));
+        return invoice;
+    }
+
     /** Creates an isolated extraction-result service with mocked persistence dependencies. */
     @BeforeEach
     void setUp() {
@@ -124,16 +185,17 @@ class ExtractionResultServiceTest {
         verify(documents, never()).findByIdAndUploadedByIdAndStatus(any(), anyLong(), any());
     }
 
-    /** Confirms an existing AI-produced invoice from an empty object and completes its review workflow. */
+    /** Confirms an existing invoice using its displayed version and returns the saved version. */
     @Test
-    void emptyObjectConfirmsExistingInvoice() throws Exception {
+    void versionOnlyConfirmsExistingInvoice() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing version-only invoice confirmation");
         UUID documentId = UUID.randomUUID();
         UUID extractionId = UUID.randomUUID();
         DocumentEntity document = DocumentEntity.builder().id(documentId)
                 .currentState(DocumentState.REVIEW_REQUIRED).build();
         ExtractionResultEntity extraction = ExtractionResultEntity.builder().id(extractionId)
                 .documentId(documentId).aiStatus(AiStatus.REVIEW_REQUIRED).humanReviewRequired(true).build();
-        InvoiceEntity invoice = InvoiceEntity.builder().id(UUID.randomUUID()).documentId(documentId)
+        InvoiceEntity invoice = InvoiceEntity.builder().id(UUID.randomUUID()).version(0L).documentId(documentId)
                 .extractionResultId(extractionId).sellerName("AI Seller").invoiceNumber("AI-1")
                 .invoiceDate(LocalDate.now().minusDays(1)).totalAmount(BigDecimal.TEN).currency("VND").build();
         ReviewTaskEntity task = ReviewTaskEntity.builder().id(UUID.randomUUID()).extractionResultId(extractionId)
@@ -143,9 +205,12 @@ class ExtractionResultServiceTest {
         when(extractionResults.findByDocumentId(documentId)).thenReturn(Optional.of(extraction));
         when(invoices.findByExtractionResultId(extractionId)).thenReturn(Optional.of(invoice));
         when(reviewTasks.findAllByExtractionResultId(extractionId)).thenReturn(List.of(task));
-        when(invoices.save(invoice)).thenReturn(invoice);
+        when(invoices.saveAndFlush(invoice)).thenAnswer(invocation -> {
+            invoice.setVersion(1L);
+            return invoice;
+        });
         UpdateInvoiceExtractionRequest request = new ObjectMapper().readValue(
-                "{}", UpdateInvoiceExtractionRequest.class);
+                "{\"version\":0}", UpdateInvoiceExtractionRequest.class);
 
         var response = service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE);
         verify(statusNotifications).afterCommit(document, DocumentState.REVIEW_REQUIRED);
@@ -157,6 +222,8 @@ class ExtractionResultServiceTest {
                 () -> assertEquals(DocumentState.EXTRACT_SUCCESS, document.getCurrentState()),
                 () -> assertEquals(ReviewStatus.COMPLETED, task.getStatus()),
                 () -> assertEquals(12L, invoice.getApprovedById()));
+        assertEquals(1L, response.getInvoice().getVersion());
+        assertEquals(1L, response.getExtractionResult().getVersion());
         assertNotNull(task.getCompletedAt());
         assertNotNull(invoice.getApprovedAt());
         assertEquals(List.of(), response.getInvoice().getItems());
@@ -176,9 +243,10 @@ class ExtractionResultServiceTest {
         when(extractionResults.findByDocumentId(documentId)).thenReturn(Optional.of(extraction));
         when(invoices.findByExtractionResultId(extractionId)).thenReturn(Optional.empty());
         when(reviewTasks.findAllByExtractionResultId(extractionId)).thenReturn(List.of());
-        when(invoices.save(any())).thenAnswer(invocation -> {
+        when(invoices.saveAndFlush(any())).thenAnswer(invocation -> {
             InvoiceEntity saved = invocation.getArgument(0);
             saved.setId(UUID.randomUUID());
+            saved.setVersion(0L);
             return saved;
         });
         when(invoiceItems.saveAll(any())).thenAnswer(invocation -> {
@@ -202,8 +270,9 @@ class ExtractionResultServiceTest {
                 () -> assertEquals("ANY", response.getInvoice().getCurrency()),
                 () -> assertNull(response.getInvoice().getSellerAddress()),
                 () -> assertEquals("free-form", response.getInvoice().getTaxCode()));
-        verify(invoices).save(argThat(saved -> saved.getDocumentId().equals(documentId)
+        verify(invoices).saveAndFlush(argThat(saved -> saved.getDocumentId().equals(documentId)
                 && saved.getExtractionResultId().equals(extractionId)));
+        assertEquals(0L, response.getInvoice().getVersion());
         assertEquals(1.5f, response.getInvoice().getItems().getFirst().getQuantity());
         assertEquals("Rice", response.getExtractionResult().getItems().getFirst().getItemName());
         verify(invoiceItems).deleteAllByInvoiceId(response.getInvoice().getId());
@@ -221,12 +290,13 @@ class ExtractionResultServiceTest {
         when(extractionResults.findByDocumentId(documentId)).thenReturn(Optional.of(
                 ExtractionResultEntity.builder().id(extractionId).documentId(documentId).build()));
         when(invoices.findByExtractionResultId(extractionId)).thenReturn(Optional.of(
-                InvoiceEntity.builder().id(invoiceId).sellerName("Reviewed seller").build()));
+                InvoiceEntity.builder().id(invoiceId).version(3L).sellerName("Reviewed seller").build()));
         when(invoiceItems.findAllByInvoiceId(invoiceId)).thenReturn(List.of(
                 org.involens_be.entity.InvoiceItemEntity.builder().invoiceId(invoiceId).itemName("Rice")
                         .quantity(1.5f).unitPrice(BigDecimal.TEN).lineTotal(new BigDecimal("15")).build()));
         var response = service.getExtractionResult(documentId, 99L, UserRole.MANAGER);
         var json = new ObjectMapper().findAndRegisterModules().valueToTree(response);
+        assertEquals(3L, json.get("version").asLong());
         assertEquals("Reviewed seller", json.get("seller_name").asText());
         assertEquals("Rice", json.get("items").get(0).get("item_name").asText());
         assertEquals(1.5, json.get("items").get(0).get("quantity").asDouble());
@@ -288,6 +358,7 @@ class ExtractionResultServiceTest {
         var mapper = Mappers.getMapper(DocumentMapper.class);
         var missing = mapper.toExtractionResultResponse(ExtractionResultEntity.builder().build(), null, null);
         assertNull(missing.getRawJson());
+        assertNull(missing.getVersion());
         assertNull(missing.getCurrency());
         assertTrue(missing.getWarnings().isEmpty());
         assertTrue(missing.getPolygons().isEmpty());
@@ -335,7 +406,7 @@ class ExtractionResultServiceTest {
         assertThrows(InvalidInvoiceUpdateException.class,
                 () -> service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE));
 
-        verify(invoices, never()).save(any());
+        verify(invoices, never()).saveAndFlush(any());
         verifyNoInteractions(reviewTasks);
     }
     /** Verifies omitted fields remain intact while explicit null clears nullable invoice fields. */

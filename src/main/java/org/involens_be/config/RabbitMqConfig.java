@@ -43,6 +43,7 @@ public class RabbitMqConfig {
         return topology;
     }
 
+    /** Declares result routing on RabbitMQ and creates the listener that forwards AI results for processing. */
     @Bean
     @ConditionalOnProperty(
             name = "app.rabbitmq.enabled",
@@ -53,6 +54,8 @@ public class RabbitMqConfig {
             RabbitTemplate rabbitTemplate,
 
             ExtractionMessageService extractionMessageService,
+            @Value("${app.rabbitmq.result.exchange:}") String resultExchange,
+            @Value("${app.rabbitmq.result.routing-key:}") String resultRoutingKey,
             // Queue nhận kết quả xử lý từ service khác
             @Value("${app.rabbitmq.result.queue:}")
             String resultQueue,
@@ -62,11 +65,14 @@ public class RabbitMqConfig {
 
         log.info("Configuring extraction result listener");
 
-        // Bắt buộc phải cấu hình đủ tên result queue và DLQ
-        if (!StringUtils.hasText(resultQueue)
+        // Validate result routing and the queues required by the listener.
+        if (!StringUtils.hasText(resultExchange)
+                || !StringUtils.hasText(resultRoutingKey)
+                || !StringUtils.hasText(resultQueue)
                 || !StringUtils.hasText(deadLetterQueue)) {
+            log.error("RabbitMQ result exchange, routing key, queue and dead letter queue must be configured");
             throw new IllegalStateException(
-                    "RabbitMQ result and dead letter queue names must be configured"
+                    "RabbitMQ result exchange, routing key, queue and dead letter queue must be configured"
             );
         }
 
@@ -83,9 +89,13 @@ public class RabbitMqConfig {
          * true = durable
          * -> Queue vẫn tồn tại nếu RabbitMQ restart.
          */
-        admin.declareQueue(
-                new Queue(resultQueue, true)
-        );
+        DirectExchange exchange = new DirectExchange(resultExchange, true, false);
+        Queue queue = new Queue(resultQueue, true);
+        admin.declareExchange(exchange);
+        admin.declareQueue(queue);
+        admin.declareBinding(BindingBuilder.bind(queue).to(exchange).with(resultRoutingKey));
+        log.info("AI result RabbitMQ routing configured. exchange={}, queue={}, routingKey={}",
+                resultExchange, resultQueue, resultRoutingKey);
 
         admin.declareQueue(
                 new Queue(deadLetterQueue, true)

@@ -122,7 +122,7 @@ public class AiExtractionResultMessage {
         private Integer height;
         @Expose
         @SerializedName("rotation_applied")
-        private Integer rotationApplied;
+        private Double rotationApplied;
     }
 
     /** Preserves the schema, model, OCR versions and processing duration reported by AI. */

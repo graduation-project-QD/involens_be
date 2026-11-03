@@ -41,6 +41,25 @@ class DocumentQueryControllerTest {
     private DocumentUploadService uploads;
     private MockMvc mvc;
 
+    /** Returns the agreed conflict contract for stale edits and transaction-level optimistic failures. */
+    @Test
+    void invoiceConflictsReturn409() throws Exception {
+        log.info("Testing invoice conflict HTTP responses");
+        UUID id = UUID.randomUUID();
+        when(queries.updateExtractionResult(eq(id), any(), eq(12L), eq(UserRole.EMPLOYEE)))
+                .thenThrow(new org.involens_be.exception.InvoiceConflictException("Hóa đơn đã được người khác chỉnh sửa"),
+                        new org.springframework.orm.ObjectOptimisticLockingFailureException(
+                                org.involens_be.entity.InvoiceEntity.class, id));
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mvc.perform(patch("/api/v1/documents/{documentId}/extraction-result", id)
+                            .contentType("application/json").content("{\"version\":0}"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.status").value(1))
+                    .andExpect(jsonPath("$.error.code").value("INVOICE_CONFLICT"))
+                    .andExpect(jsonPath("$.error.message").value("Hóa đơn đã được người khác chỉnh sửa"));
+        }
+    }
+
     /** Exposes the signed file URL and shared document errors under the API's snake-case fields. */
     @Test
     void detailReturnsFileUrl() throws Exception {
@@ -333,25 +352,30 @@ class DocumentQueryControllerTest {
                 .andExpect(jsonPath("$.error.code").value("EXTRACTION_RESULT_NOT_FOUND"));
     }
 
-    /** Accepts an empty JSON object so a user can confirm an unchanged AI-produced invoice. */
+    /** Accepts the displayed version so a user can confirm an unchanged AI-produced invoice. */
     @Test
-    void emptyObjectConfirmsExistingExtractionResult() throws Exception {
+    void versionOnlyConfirmsExistingExtractionResult() throws Exception {
+        log.info("Testing version-only invoice confirmation");
         UUID id = UUID.randomUUID();
         when(queries.updateExtractionResult(eq(id), any(), eq(12L),
                 eq(org.involens_be.common.UserRole.EMPLOYEE))).thenReturn(
                 org.involens_be.dto.response.UpdateExtractionResultResponse.builder()
                         .extractionResult(org.involens_be.dto.response.ExtractionResultResponse.builder()
-                                .documentId(id).aiStatus(org.involens_be.common.AiStatus.SUCCESS)
+                                .documentId(id).version(1L).aiStatus(org.involens_be.common.AiStatus.SUCCESS)
                                 .humanReviewRequired(false).build())
                         .invoice(org.involens_be.dto.response.InvoiceResponse.builder()
-                                .documentId(id).sellerName("AI Seller").build())
+                                .documentId(id).version(1L).sellerName("AI Seller").build())
                         .build());
 
         mvc.perform(patch("/api/v1/documents/" + id + "/extraction-result")
-                        .contentType("application/json").content("{}"))
+                        .contentType("application/json").content("{\"version\":0}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value(0))
                 .andExpect(jsonPath("$.data.extraction_result.ai_status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.invoice.seller_name").value("AI Seller"));
+                .andExpect(jsonPath("$.data.invoice.seller_name").value("AI Seller"))
+                .andExpect(jsonPath("$.data.invoice.version").value(1))
+                .andExpect(jsonPath("$.data.extraction_result.version").value(1));
+        verify(queries).updateExtractionResult(eq(id), argThat(request -> Long.valueOf(0).equals(request.getVersion())),
+                eq(12L), eq(UserRole.EMPLOYEE));
     }
 }

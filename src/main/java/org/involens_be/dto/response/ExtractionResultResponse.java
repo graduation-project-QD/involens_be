@@ -21,6 +21,11 @@ import java.util.Map;
 public class ExtractionResultResponse {
 
     @Expose
+    @JsonProperty("version")
+    @SerializedName("version")
+    private Long version;
+
+    @Expose
     @JsonProperty("id")
     @SerializedName("id")
     private UUID id;

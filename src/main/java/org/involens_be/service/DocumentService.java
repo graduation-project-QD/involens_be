@@ -25,6 +25,9 @@ import org.involens_be.entity.InvoiceItemEntity;
 import org.involens_be.repository.InvoiceItemRepository;
 import org.involens_be.dto.response.InvoiceItemResponse;
 import org.involens_be.exception.InvalidInvoiceUpdateException;
+import org.involens_be.exception.InvoiceConflictException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import jakarta.persistence.OptimisticLockException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -193,7 +196,7 @@ public class DocumentService {
 
     /**
      * Applies human corrections to extracted invoice data and completes the related review workflow atomically.
-     * An empty object confirms an existing AI-produced invoice without changing its business fields.
+     * The client's invoice version guards corrections and confirmation against stale edits.
      */
     @Transactional
     public UpdateExtractionResultResponse updateExtractionResult(
@@ -212,12 +215,14 @@ public class DocumentService {
                 });
         InvoiceEntity invoice = invoiceRepository.findByExtractionResultId(extractionResult.getId())
                 .orElseGet(() -> createInvoice(documentId, extractionResult.getId(), request));
+        validateInvoiceVersion(invoice, request.getVersion());
         applyInvoiceUpdates(invoice, request);
         var replacementItems = request.hasField("items") ? validateInvoiceItems(request) : null;
 
         LocalDateTime completedAt = LocalDateTime.now(Clock.systemUTC());
         invoice.setApprovedById(reviewerId);
         invoice.setApprovedAt(completedAt);
+        InvoiceEntity savedInvoice = saveReviewedInvoice(invoice);
         extractionResult.setAiStatus(AiStatus.SUCCESS);
         extractionResult.setHumanReviewRequired(false);
         DocumentState previousState = document.getCurrentState();
@@ -228,7 +233,6 @@ public class DocumentService {
             task.setCompletedAt(completedAt);
         });
 
-        InvoiceEntity savedInvoice = invoiceRepository.save(invoice);
         if (replacementItems != null) {
             log.info("Replacing reviewed invoice items. invoiceId={}, count={}", savedInvoice.getId(), replacementItems.size());
             invoiceItemRepository.deleteAllByInvoiceId(savedInvoice.getId());
@@ -247,6 +251,33 @@ public class DocumentService {
         log.info("Extracted invoice updated successfully. documentId={}, invoiceId={}, completedTasks={}",
                 documentId, savedInvoice.getId(), reviewTasks.size());
         return response;
+    }
+
+    /** Requires the version displayed to the reviewer before changing an existing invoice. */
+    private void validateInvoiceVersion(InvoiceEntity invoice, Long requestedVersion) {
+        log.debug("Validating invoice edit version. invoiceId={}, requestedVersion={}", invoice.getId(), requestedVersion);
+        if ((requestedVersion != null && requestedVersion < 0)
+                || (invoice.getId() != null && requestedVersion == null)) {
+            log.warn("Invoice update rejected because its version is missing or negative. invoiceId={}", invoice.getId());
+            throw new InvalidInvoiceUpdateException("version must be a non-negative integer and is required for an existing invoice");
+        }
+        if (invoice.getId() != null && !requestedVersion.equals(invoice.getVersion())) {
+            throw new InvoiceConflictException("Hóa đơn đã được người khác chỉnh sửa");
+        }
+        log.debug("Invoice edit version validated. invoiceId={}", invoice.getId());
+    }
+
+    /** Flushes invoice corrections to detect concurrent writes and return the new persisted version. */
+    private InvoiceEntity saveReviewedInvoice(InvoiceEntity invoice) {
+        log.debug("Saving reviewed invoice with optimistic locking. invoiceId={}", invoice.getId());
+        try {
+            InvoiceEntity savedInvoice = invoiceRepository.saveAndFlush(invoice);
+            log.info("Reviewed invoice saved. invoiceId={}, version={}", savedInvoice.getId(), savedInvoice.getVersion());
+            return savedInvoice;
+        } catch (OptimisticLockingFailureException | OptimisticLockException exception) {
+            log.warn("Concurrent invoice write detected. invoiceId={}", invoice.getId(), exception);
+            throw new InvoiceConflictException("Hóa đơn đã được người khác chỉnh sửa");
+        }
     }
 
     /** Loads persisted invoice lines for GET and PATCH responses without imposing an order. */

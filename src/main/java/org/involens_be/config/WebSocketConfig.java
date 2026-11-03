@@ -3,6 +3,7 @@ package org.involens_be.config;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.involens_be.service.WebSocketSessionService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
@@ -23,12 +24,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final WebSocketSecurityInterceptor security;
     private final WebSocketSessionService sessions;
 
-    /** Exposes the native STOMP endpoint only to the approved frontend origins. */
+    @Value("${app.websocket.allowed-origins}")
+    private String[] allowedOrigins;
+
+    /** Exposes the native STOMP endpoint only to the frontend origins supplied through configuration. */
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        log.info("Configuring document WebSocket endpoint /ws");
-        registry.addEndpoint("/ws").setAllowedOrigins("http://localhost:5173", "http://13.239.112.70");
+        log.info("Configuring document WebSocket endpoint /ws with allowed origins {}", (Object) allowedOrigins);
+        registry.addEndpoint("/ws").setAllowedOrigins(allowedOrigins);
         registry.setPreserveReceiveOrder(true);
+        log.info("Document WebSocket endpoint configured successfully");
     }
 
     /** Enables private queues in memory and preserves notification order within each connection. */

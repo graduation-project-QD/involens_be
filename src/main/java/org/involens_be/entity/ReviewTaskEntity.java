@@ -19,7 +19,7 @@ public class ReviewTaskEntity {
     @Column(name = "extraction_result_id", nullable = false)
     private UUID extractionResultId;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "text")
     private String reason;
 
     @Column(nullable = false)

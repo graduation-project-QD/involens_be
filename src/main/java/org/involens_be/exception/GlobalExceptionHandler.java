@@ -13,6 +13,25 @@ import org.springframework.security.access.AccessDeniedException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    /** Rejects oversized multipart requests before upload processing with the user-facing batch limit. */
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<BaseResponse<Void>> handleMaxUploadSizeExceeded(
+            org.springframework.web.multipart.MaxUploadSizeExceededException exception) {
+        log.warn("Rejecting multipart upload because the request size limit was exceeded. maxUploadSize={}",
+                exception.getMaxUploadSize());
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(BaseResponse.error(null, "UPLOAD_REQUEST_TOO_LARGE",
+                        "Tổng dung lượng các file phải dưới 50 MB."));
+    }
+
+    /** Returns a conflict when another reviewer has already changed the invoice version. */
+    @ExceptionHandler(InvoiceConflictException.class)
+    public ResponseEntity<BaseResponse<Void>> handleInvoiceConflict(InvoiceConflictException exception) {
+        log.warn("Returning invoice version conflict response");
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(BaseResponse.error(null, "INVOICE_CONFLICT", exception.getMessage()));
+    }
+
     /** Returns the account-not-found envelope for manager account operations. */
     @ExceptionHandler(AccountNotFoundException.class)
     public ResponseEntity<BaseResponse<Void>> handleAccountNotFound(AccountNotFoundException exception) {

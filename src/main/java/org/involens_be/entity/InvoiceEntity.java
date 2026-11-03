@@ -16,6 +16,10 @@ public class InvoiceEntity {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
+
     @Column(name = "document_id", nullable = false, unique = true)
     private UUID documentId;
 

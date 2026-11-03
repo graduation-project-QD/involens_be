@@ -50,7 +50,7 @@ public class ReviewTaskService {
             throw new InvalidDocumentFilterException("date_to is outside the supported date range");
         }
         var pageable = PageRequest.of(request.getPage() - 1, request.getPage_size(),
-                Sort.by(Sort.Order.asc("priority"), Sort.Order.asc("createdAt")));
+                Sort.by(Sort.Order.asc("priority"), Sort.Order.desc("createdAt")));
         var result = reviewTaskRepository.findVisibleTasks(request.getStatus(), manager, userId,
                 keywordPattern(request.getQ()), from, until, pageable);
         var items = result.getContent().stream().map(reviewTaskMapper::toListItemResponse).toList();

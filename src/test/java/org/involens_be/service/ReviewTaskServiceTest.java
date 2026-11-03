@@ -61,7 +61,7 @@ class ReviewTaskServiceTest {
                 response.getItems().getFirst().getCreatedAt());
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(reviewTasks).findVisibleTasks(eq(ReviewStatus.PENDING), eq(false), eq(12L), isNull(), isNull(), isNull(), pageable.capture());
-        assertEquals("priority: ASC,createdAt: ASC", pageable.getValue().getSort().toString().replace(", ", ","));
+        assertEquals("priority: ASC,createdAt: DESC", pageable.getValue().getSort().toString().replace(", ", ","));
     }
 
     /** Translates stored backend errors and AI warnings while preserving unknown or empty diagnostics. */

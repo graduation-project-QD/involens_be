@@ -33,6 +33,9 @@ public class SecurityConfig {
 
     private static final int MINIMUM_SECRET_BYTES = 32;
 
+    @Value("${app.cors.allowed-origins}")
+    private List<String> allowedOrigins;
+
     /**
      * Configures stateless API authorization, permits login, and protects all other endpoints.
      *
@@ -67,19 +70,16 @@ public class SecurityConfig {
     }
 
     /**
-     * Allows the local frontend to call APIs with authorization headers and supported
+     * Allows the configured frontend origins to call APIs with authorization headers and supported
      * HTTP methods, including preflight requests, without cookie credentials.
      *
      * @return CORS configuration applied to all application endpoints
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
-        log.info("Configuring CORS for frontend origin http://13.239.112.70");
+        log.info("Configuring CORS for frontend origins {}", allowedOrigins);
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of(
-                "http://localhost:5173",
-                "http://13.239.112.70"
-        ));
+        configuration.setAllowedOrigins(allowedOrigins);
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(false);

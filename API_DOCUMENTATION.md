@@ -807,29 +807,6 @@ JWT thiếu, sai chữ ký, hết hạn, đã bị thu hồi hoặc thuộc tài
 - Mã lỗi: `src/main/java/org/involens_be/exception/GlobalExceptionHandler.java`.
 - Enum trạng thái: `src/main/java/org/involens_be/common/`.
 
-## Development mock invoices
-
-With the `dev` profile, `MOCK_INVOICES_ENABLED=true` (default) seeds ten synthetic
-invoices after startup for the active MANAGER configured by `app.admin.email`
-(`ADMIN_EMAIL`, default `quan@involens.com`). A missing, inactive, or non-manager
-account causes seeding to be skipped with a log message.
-
-- Five documents have `REVIEW_REQUIRED`, AI status `REVIEW_REQUIRED`, and `PENDING`
-  review tasks. They include low-confidence recognition and some absent addresses.
-- Five documents have `EXTRACT_SUCCESS` and AI status `SUCCESS`.
-- Each invoice has synthetic seller, date, VND amounts, and one invoice line.
-- Filenames are `mock-invoice-dev-1.pdf` through `mock-invoice-dev-10.pdf`.
-  These are data-only samples: no MinIO object is created and `file_url` is null.
-
-Log in as the configured manager and use the existing document list, review task
-list, and `GET /api/v1/documents/{documentId}/extraction-result` APIs. Submit review
-corrections through `PATCH /api/v1/documents/{documentId}/extraction-result`.
-Seeding uses the normal AI persistence service without calling an AI worker or
-RabbitMQ. Existing sample filenames for this manager are skipped, including
-reviewed or inactive documents; restarting does not overwrite FE changes.
-The batch rolls back on persistence failure. Set `MOCK_INVOICES_ENABLED=false`
-to disable future seeding; existing samples remain available.
-
 ## Dedicated extracted invoice list
 
 `GET /api/v1/invoices` requires a bearer access token. Managers see all active

@@ -45,6 +45,7 @@ public interface DocumentMapper {
     @Mapping(target = "processingStartedAt", expression = "java(toUtc(extractionResult.getProcessingStartedAt()))")
     @Mapping(target = "processingFinishedAt", expression = "java(toUtc(extractionResult.getProcessingFinishedAt()))")
     @Mapping(target = "id", source = "extractionResult.id")
+    @Mapping(target = "version", source = "invoice.version")
     @Mapping(target = "documentId", source = "extractionResult.documentId")
     @Mapping(target = "items", source = "items")
     @Mapping(target = "currency", source = "invoice.currency")
