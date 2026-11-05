@@ -289,7 +289,7 @@ public class DocumentService {
         return items;
     }
 
-    /** Validates a complete reviewed item list before any replacement is persisted. */
+    /** Validates replacement lines, including returns with negative quantities or totals and unavailable optional values. */
     private List<InvoiceItemEntity> validateInvoiceItems(UpdateInvoiceExtractionRequest request) {
         log.debug("Validating reviewed invoice items");
         if (request.getItems() == null) {
@@ -299,11 +299,11 @@ public class DocumentService {
         var items = new ArrayList<InvoiceItemEntity>();
         for (var item : request.getItems()) {
             if (item == null || item.getItemName() == null || item.getItemName().isBlank()
-                    || item.getQuantity() == null || !Float.isFinite(item.getQuantity()) || item.getQuantity() <= 0
-                    || item.getUnitPrice() == null || item.getUnitPrice().signum() < 0
-                    || item.getLineTotal() == null || item.getLineTotal().signum() < 0) {
+                    || (item.getQuantity() != null && (!Float.isFinite(item.getQuantity()) || item.getQuantity() == 0))
+                    || (item.getUnitPrice() != null && item.getUnitPrice().signum() < 0)
+                    || item.getLineTotal() == null) {
                 log.warn("Invoice items replacement rejected. index={}", items.size());
-                throw new InvalidInvoiceUpdateException("Each item requires non-blank item_name, finite quantity > 0, unit_price >= 0 and line_total >= 0");
+                throw new InvalidInvoiceUpdateException("Each item requires non-blank item_name and non-null line_total; when provided, quantity must be finite and non-zero, and unit_price must be >= 0");
             }
             items.add(InvoiceItemEntity.builder().itemName(item.getItemName()).quantity(item.getQuantity())
                     .unitPrice(item.getUnitPrice()).lineTotal(item.getLineTotal()).build());
@@ -321,7 +321,7 @@ public class DocumentService {
                 .documentId(documentId)
                 .extractionResultId(extractionResultId)
                 .sellerName(readRequiredText(request.getSellerName(), "sellerName"))
-                .invoiceNumber(readRequiredText(request.getInvoiceNumber(), "invoiceNumber"))
+                .invoiceNumber(readOptionalText(request.getInvoiceNumber(), "invoiceNumber"))
                 .invoiceDate(readRequiredDate(request.getInvoiceDate(), "invoiceDate"))
                 .totalAmount(readRequiredAmount(request.getTotalAmount(), "totalAmount"))
                 .currency(readRequiredText(request.getCurrency(), "currency"))
@@ -341,7 +341,7 @@ public class DocumentService {
             invoice.setSellerAddress(readOptionalText(request.getSellerAddress(), "sellerAddress"));
         }
         if (request.hasField("invoiceNumber")) {
-            invoice.setInvoiceNumber(readRequiredText(request.getInvoiceNumber(), "invoiceNumber"));
+            invoice.setInvoiceNumber(readOptionalText(request.getInvoiceNumber(), "invoiceNumber"));
         }
         if (request.hasField("taxCode")) {
             invoice.setTaxCode(readOptionalText(request.getTaxCode(), "taxCode"));

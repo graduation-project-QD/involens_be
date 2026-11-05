@@ -18,6 +18,9 @@ import org.involens_be.repository.InvoiceRepository;
 import org.involens_be.repository.ReviewTaskRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
@@ -230,9 +233,12 @@ class ExtractionResultServiceTest {
         verify(invoiceItems, never()).deleteAllByInvoiceId(any());
     }
 
-    /** Creates a missing invoice from complete reviewed fields before marking extraction as successful. */
-    @Test
-    void completeRequestCreatesMissingInvoice() throws Exception {
+    /** Creates and confirms a missing invoice with an optional invoice number preserved as supplied. */
+    @ParameterizedTest
+    @ValueSource(strings = {"", "\"invoiceNumber\":null,", "\"invoiceNumber\":\"\",",
+            "\"invoiceNumber\":\"   \",", "\"invoiceNumber\":\"INV-2\","})
+    void completeRequestCreatesMissingInvoice(String invoiceNumberField) throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing invoice creation with an optional invoice number");
         UUID documentId = UUID.randomUUID();
         UUID extractionId = UUID.randomUUID();
         DocumentEntity document = DocumentEntity.builder().id(documentId)
@@ -256,10 +262,10 @@ class ExtractionResultServiceTest {
         });
         String date = LocalDate.now(java.time.ZoneId.of("Asia/Ho_Chi_Minh")).minusDays(1).toString();
         UpdateInvoiceExtractionRequest request = new ObjectMapper().findAndRegisterModules().readValue("""
-                {"sellerName":"Reviewed Seller","invoiceNumber":"INV-2","invoiceDate":"%s",
+                {"sellerName":"Reviewed Seller",%s"invoiceDate":"%s",
                  "totalAmount":125.50,"currency":"ANY","sellerAddress":null,"taxCode":"free-form",
                  "items":[{"item_name":"Rice","quantity":1.5,"unit_price":10,"line_total":15}]}
-                """.formatted(date), UpdateInvoiceExtractionRequest.class);
+                """.formatted(invoiceNumberField, date), UpdateInvoiceExtractionRequest.class);
 
         var response = service.updateExtractionResult(documentId, request, 99L, UserRole.MANAGER);
 
@@ -273,6 +279,8 @@ class ExtractionResultServiceTest {
         verify(invoices).saveAndFlush(argThat(saved -> saved.getDocumentId().equals(documentId)
                 && saved.getExtractionResultId().equals(extractionId)));
         assertEquals(0L, response.getInvoice().getVersion());
+        assertEquals(request.getInvoiceNumber(), response.getInvoice().getInvoiceNumber());
+        assertEquals(request.getInvoiceNumber(), response.getExtractionResult().getInvoiceNumber());
         assertEquals(1.5f, response.getInvoice().getItems().getFirst().getQuantity());
         assertEquals("Rice", response.getExtractionResult().getItems().getFirst().getItemName());
         verify(invoiceItems).deleteAllByInvoiceId(response.getInvoice().getId());
@@ -372,7 +380,80 @@ class ExtractionResultServiceTest {
         }
     }
 
-    /** Accepts an empty replacement and rejects missing or invalid reviewed line values. */
+    /** Persists unavailable line quantities and prices as null and returns the reviewed replacement values. */
+    @ParameterizedTest
+    @ValueSource(strings = {"", "\"quantity\":null,\"unit_price\":null,",
+            "\"quantity\":\"\",\"unit_price\":\"\",", "\"quantity\":null,\"unit_price\":10,",
+            "\"quantity\":1.5,\"unit_price\":null,", "\"quantity\":1.5,\"unit_price\":0,"})
+    void replacesItemsWithOptionalQuantityAndUnitPrice(String optionalFields) throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing optional reviewed line quantities and unit prices");
+        UUID documentId = UUID.randomUUID();
+        InvoiceEntity invoice = prepareVersionedInvoice(documentId);
+        when(invoices.saveAndFlush(invoice)).thenReturn(invoice);
+        when(invoiceItems.saveAll(any())).thenAnswer(invocation -> {
+            List<org.involens_be.entity.InvoiceItemEntity> lines = invocation.getArgument(0);
+            when(invoiceItems.findAllByInvoiceId(invoice.getId())).thenReturn(lines);
+            return lines;
+        });
+        UpdateInvoiceExtractionRequest request = new ObjectMapper().readValue("""
+                {"version":2,"items":[{"item_name":"Rice",%s"line_total":15}]}
+                """.formatted(optionalFields), UpdateInvoiceExtractionRequest.class);
+        Float expectedQuantity = optionalFields.contains("1.5") ? 1.5f : null;
+        BigDecimal expectedPrice = optionalFields.contains("\"unit_price\":10") ? BigDecimal.TEN
+                : optionalFields.contains("\"unit_price\":0") ? BigDecimal.ZERO : null;
+
+        var response = service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE);
+
+        verify(invoiceItems).deleteAllByInvoiceId(invoice.getId());
+        verify(invoiceItems).saveAll(argThat(lines -> {
+            var line = lines.iterator().next();
+            return invoice.getId().equals(line.getInvoiceId())
+                    && java.util.Objects.equals(expectedQuantity, line.getQuantity())
+                    && java.util.Objects.equals(expectedPrice, line.getUnitPrice());
+        }));
+        assertEquals(expectedQuantity, response.getInvoice().getItems().getFirst().getQuantity());
+        assertEquals(expectedPrice, response.getInvoice().getItems().getFirst().getUnitPrice());
+        assertEquals(expectedQuantity, response.getExtractionResult().getItems().getFirst().getQuantity());
+        assertEquals(expectedPrice, response.getExtractionResult().getItems().getFirst().getUnitPrice());
+        assertEquals("Rice", response.getInvoice().getItems().getFirst().getItemName());
+        assertEquals(new BigDecimal("15"), response.getInvoice().getItems().getFirst().getLineTotal());
+    }
+
+    /** Saves return quantities and signed totals without changing their values in either review response. */
+    @ParameterizedTest
+    @CsvSource({"-1.5,-15", "-1,0", "-1,15", "1,-15", "null,-15"})
+    void replacesItemsWithReturnQuantitiesAndSignedTotals(String quantity, BigDecimal lineTotal) throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing returned invoice lines and signed totals");
+        UUID documentId = UUID.randomUUID();
+        InvoiceEntity invoice = prepareVersionedInvoice(documentId);
+        when(invoices.saveAndFlush(invoice)).thenReturn(invoice);
+        when(invoiceItems.saveAll(any())).thenAnswer(invocation -> {
+            List<org.involens_be.entity.InvoiceItemEntity> lines = invocation.getArgument(0);
+            when(invoiceItems.findAllByInvoiceId(invoice.getId())).thenReturn(lines);
+            return lines;
+        });
+        var request = new ObjectMapper().readValue("""
+                {"version":2,"items":[{"item_name":"Returned Rice","quantity":%s,
+                 "unit_price":10,"line_total":%s}]}
+                """.formatted(quantity, lineTotal), UpdateInvoiceExtractionRequest.class);
+        Float expectedQuantity = "null".equals(quantity) ? null : Float.valueOf(quantity);
+
+        var response = service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE);
+
+        verify(invoiceItems).deleteAllByInvoiceId(invoice.getId());
+        verify(invoiceItems).saveAll(argThat(lines -> {
+            var line = lines.iterator().next();
+            return invoice.getId().equals(line.getInvoiceId())
+                    && java.util.Objects.equals(expectedQuantity, line.getQuantity())
+                    && lineTotal.equals(line.getLineTotal());
+        }));
+        assertEquals(expectedQuantity, response.getInvoice().getItems().getFirst().getQuantity());
+        assertEquals(lineTotal, response.getInvoice().getItems().getFirst().getLineTotal());
+        assertEquals(expectedQuantity, response.getExtractionResult().getItems().getFirst().getQuantity());
+        assertEquals(lineTotal, response.getExtractionResult().getItems().getFirst().getLineTotal());
+    }
+
+    /** Accepts an empty replacement and rejects missing required fields or invalid supplied numbers. */
     @Test
     void validatesItemReplacement() throws Exception {
         org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing item replacement validation");
@@ -382,6 +463,13 @@ class ExtractionResultServiceTest {
         assertEquals(List.of(), result);
         for (String body : List.of("{\"items\":null}", "{\"items\":[null]}",
                 "{\"items\":[{}]}",
+                "{\"items\":[{\"item_name\":\"Rice\"}]}",
+                "{\"items\":[{\"item_name\":\" \",\"line_total\":0}]}",
+                "{\"items\":[{\"item_name\":\"Rice\",\"line_total\":null}]}",
+                "{\"items\":[{\"item_name\":\"Rice\",\"quantity\":-0.0,\"line_total\":-15}]}",
+                "{\"items\":[{\"item_name\":\"Rice\",\"quantity\":\"NaN\",\"line_total\":0}]}",
+                "{\"items\":[{\"item_name\":\"Rice\",\"quantity\":\"Infinity\",\"line_total\":0}]}",
+                "{\"items\":[{\"item_name\":\"Rice\",\"unit_price\":-1,\"line_total\":0}]}",
                 "{\"items\":[{\"item_name\":\"Rice\",\"quantity\":0,\"unit_price\":10,\"line_total\":0}]}",
                 "{\"items\":[{\"item_name\":\"Rice\",\"quantity\":1.5,\"unit_price\":-1,\"line_total\":0}]}")) {
             var request = mapper.readValue(body, UpdateInvoiceExtractionRequest.class);
@@ -426,11 +514,36 @@ class ExtractionResultServiceTest {
         assertNull(invoice.getTaxCode());
     }
 
-    /** Verifies explicit null is rejected for every database-required invoice field. */
+    /** Updates or clears a supplied invoice number and preserves it when omitted during review. */
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "{\"invoiceNumber\":null}", "{\"invoiceNumber\":\"\"}",
+            "{\"invoiceNumber\":\"   \"}", "{\"invoiceNumber\":\"INV-2\"}"})
+    void partialRequestAcceptsOptionalInvoiceNumber(String body) throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing optional invoice number updates");
+        UUID documentId = UUID.randomUUID();
+        InvoiceEntity invoice = prepareVersionedInvoice(documentId);
+        invoice.setInvoiceNumber("Original number");
+        when(invoices.saveAndFlush(invoice)).thenReturn(invoice);
+        UpdateInvoiceExtractionRequest request = new ObjectMapper().readValue(
+                body, UpdateInvoiceExtractionRequest.class);
+        request.setVersion(2L);
+        String expectedNumber = request.hasField("invoiceNumber") ? request.getInvoiceNumber() : "Original number";
+
+        var response = service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE);
+
+        verify(invoices).saveAndFlush(invoice);
+        assertEquals(expectedNumber, invoice.getInvoiceNumber());
+        assertEquals(expectedNumber, response.getInvoice().getInvoiceNumber());
+        assertEquals(expectedNumber, response.getExtractionResult().getInvoiceNumber());
+        assertNotNull(invoice.getApprovedAt());
+        assertEquals("Original seller", invoice.getSellerName());
+    }
+
+    /** Verifies explicit null is rejected for fields required by invoice review validation. */
     @Test
     void partialRequestRejectsNullRequiredFields() throws Exception {
         org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing required invoice PATCH fields");
-        for (String field : List.of("sellerName", "invoiceNumber", "invoiceDate", "totalAmount", "currency")) {
+        for (String field : List.of("sellerName", "invoiceDate", "totalAmount", "currency")) {
             UpdateInvoiceExtractionRequest request = new ObjectMapper().findAndRegisterModules().readValue(
                     "{\"" + field + "\":null}", UpdateInvoiceExtractionRequest.class);
             assertThrows(InvalidInvoiceUpdateException.class,
