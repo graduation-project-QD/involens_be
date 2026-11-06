@@ -186,8 +186,8 @@ class DocumentServiceTest {
         log.info("Testing duplicate document rejection against persisted checksums");
         MockMultipartFile file = new MockMultipartFile(
                 "files", "renamed-receipt.jpg", "image/jpeg", "same-image-data".getBytes());
-        when(documentRepository.existsByChecksumSha256AndStatusAndUploadStatus(
-                anyString(), eq(org.involens_be.common.CommonStatus.ACTIVE), eq(UploadStatus.UPLOADED)))
+        when(documentRepository.existsByUploadedByIdAndChecksumSha256AndStatusAndUploadStatus(
+                eq(12L), anyString(), eq(CommonStatus.ACTIVE), eq(UploadStatus.UPLOADED)))
                 .thenReturn(true);
         when(documentRepository.saveAllAndFlush(any())).thenAnswer(invocation -> {
             List<DocumentEntity> documents = invocation.getArgument(0);
@@ -204,6 +204,52 @@ class DocumentServiceTest {
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
         verifyNoInteractions(extractionMessageService);
         log.info("Persisted duplicate document rejection test completed successfully");
+    }
+
+    /** Keeps identical content independent across owners while rejecting a repeat upload by its owner. */
+    @Test
+    void uploadDocumentsScopesDuplicatesAndExtractionToEachOwner() throws Exception {
+        log.info("Testing independent uploads of identical content across owners");
+        var file = new MockMultipartFile("files", "receipt.pdf", "application/pdf", new byte[]{1, 2, 3});
+        List<DocumentEntity> persisted = new java.util.ArrayList<>();
+        when(documentRepository.existsByUploadedByIdAndChecksumSha256AndStatusAndUploadStatus(
+                any(), anyString(), eq(CommonStatus.ACTIVE), eq(UploadStatus.UPLOADED)))
+                .thenAnswer(invocation -> persisted.stream().anyMatch(document ->
+                        document.getUploadedById().equals(invocation.getArgument(0))
+                                && document.getChecksumSha256().equals(invocation.getArgument(1))
+                                && document.getUploadStatus() == UploadStatus.UPLOADED));
+        when(documentRepository.saveAllAndFlush(any())).thenAnswer(invocation -> {
+            List<DocumentEntity> documents = invocation.getArgument(0);
+            documents.forEach(document -> document.setId(UUID.randomUUID()));
+            persisted.addAll(documents);
+            return documents;
+        });
+
+        for (Long owner : List.of(12L, 13L, 12L)) {
+            documentUploadService.uploadDocuments(List.of(file), owner);
+            TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+            TransactionSynchronizationManager.clearSynchronization();
+            TransactionSynchronizationManager.initSynchronization();
+        }
+
+        assertEquals(List.of(UploadStatus.UPLOADED, UploadStatus.UPLOADED, UploadStatus.FAILED),
+                persisted.stream().map(DocumentEntity::getUploadStatus).toList());
+        assertEquals("DUPLICATE_FILE", persisted.get(2).getErrorCode());
+        assertEquals(persisted.get(0).getChecksumSha256(), persisted.get(1).getChecksumSha256());
+        org.junit.jupiter.api.Assertions.assertNotEquals(persisted.get(0).getId(), persisted.get(1).getId());
+        org.junit.jupiter.api.Assertions.assertNotEquals(
+                persisted.get(0).getObjectKey(), persisted.get(1).getObjectKey());
+        verify(minioClient, times(2)).putObject(any(PutObjectArgs.class));
+        verify(extractionMessageService).sendExtract(persisted.get(0));
+        verify(extractionMessageService).sendExtract(persisted.get(1));
+        verifyNoMoreInteractions(extractionMessageService);
+        InOrder duplicateChecks = inOrder(documentRepository);
+        for (Long owner : List.of(12L, 13L, 12L)) {
+            duplicateChecks.verify(documentRepository).acquireChecksumLock(owner, persisted.get(0).getChecksumSha256());
+            duplicateChecks.verify(documentRepository).existsByUploadedByIdAndChecksumSha256AndStatusAndUploadStatus(
+                    owner, persisted.get(0).getChecksumSha256(), CommonStatus.ACTIVE, UploadStatus.UPLOADED);
+        }
+        log.info("Independent owner uploads and duplicate rejection verified successfully");
     }
 
     /** Verifies that only the first copy is uploaded and sent to AI, with dispatch deferred until commit. */

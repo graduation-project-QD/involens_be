@@ -180,7 +180,11 @@ public class DocumentUploadService {
                     .map(DocumentEntity::getChecksumSha256)
                     .distinct()
                     .sorted()
-                    .forEach(documentRepository::acquireChecksumLock);
+                    .forEach(checksum -> {
+                        log.debug("Acquiring document duplicate-check lock. uploadedById={}, checksum={}",
+                                uploadedById, checksum);
+                        documentRepository.acquireChecksumLock(uploadedById, checksum);
+                    });
 
             for (int index = 0; index < documents.size(); index++) {
                 DocumentEntity document = documents.get(index);
@@ -188,11 +192,11 @@ public class DocumentUploadService {
                     String checksum = document.getChecksumSha256();
                     boolean duplicateInBatch = !acceptedChecksums.add(checksum);
                     boolean duplicateInDatabase = documentRepository
-                            .existsByChecksumSha256AndStatusAndUploadStatus(
-                                    checksum, CommonStatus.ACTIVE, UploadStatus.UPLOADED);
+                            .existsByUploadedByIdAndChecksumSha256AndStatusAndUploadStatus(
+                                    uploadedById, checksum, CommonStatus.ACTIVE, UploadStatus.UPLOADED);
                     if (duplicateInBatch || duplicateInDatabase) {
-                        log.warn("Document upload rejected because its content is duplicated. filename={}, checksum={}, duplicateInBatch={}",
-                                document.getOriginalFilename(), checksum, duplicateInBatch);
+                        log.warn("Document upload rejected because this uploader already submitted its content. uploadedById={}, filename={}, checksum={}, duplicateInBatch={}",
+                                uploadedById, document.getOriginalFilename(), checksum, duplicateInBatch);
                         markFailedDocument(document, DUPLICATE_FILE_CODE, DUPLICATE_FILE_MESSAGE);
                     } else {
                         storeFile(files.get(index), document);

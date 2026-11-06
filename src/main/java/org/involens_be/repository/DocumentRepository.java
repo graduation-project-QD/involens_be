@@ -14,15 +14,17 @@ public interface DocumentRepository extends JpaRepository<DocumentEntity, UUID>,
     java.util.Optional<DocumentEntity> findByIdForExtractionUpdate(
             @org.springframework.data.repository.query.Param("documentId") UUID documentId);
 
-    /** Serializes duplicate checks for one checksum until the current database transaction completes. */
+    /** Serializes one uploader's duplicate checks for a checksum until the transaction completes. */
     @org.springframework.data.jpa.repository.Query(
-            value = "select 1 from pg_advisory_xact_lock(hashtextextended(:checksum, 0))",
+            value = "select 1 from pg_advisory_xact_lock(hashtextextended(:checksum, :uploadedById))",
             nativeQuery = true)
     Integer acquireChecksumLock(
+            @org.springframework.data.repository.query.Param("uploadedById") Long uploadedById,
             @org.springframework.data.repository.query.Param("checksum") String checksum);
 
-    /** Checks whether the same file content is already active and successfully uploaded system-wide. */
-    boolean existsByChecksumSha256AndStatusAndUploadStatus(
+    /** Checks whether this uploader already owns active, successfully uploaded copies of the content. */
+    boolean existsByUploadedByIdAndChecksumSha256AndStatusAndUploadStatus(
+            Long uploadedById,
             String checksumSha256,
             org.involens_be.common.CommonStatus status,
             org.involens_be.common.UploadStatus uploadStatus);

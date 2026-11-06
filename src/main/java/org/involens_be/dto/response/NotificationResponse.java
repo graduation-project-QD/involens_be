@@ -18,5 +18,5 @@ public record NotificationResponse(@Expose UUID id, @Expose NotificationType typ
                        @Expose String errorCode, @Expose String errorMessage) { }
     public record ItemListing(@Expose List<Item> items, @Expose long total,
                               @Expose int page, @Expose int pageSize) { }
-    public record Change(@Expose String type, @Expose UUID notificationId) { }
+    public record Change(@Expose String type, @Expose UUID notificationId, @Expose long unreadCount) { }
 }

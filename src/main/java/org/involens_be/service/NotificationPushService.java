@@ -3,17 +3,23 @@ package org.involens_be.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.involens_be.dto.response.NotificationResponse;
+import org.involens_be.repository.NotificationRepository;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.util.UUID;
 
-/** Invalidates uploader bell data after commit so clients can reload an authoritative snapshot. */
+/** Publishes unread group counts and bell refresh hints after notification changes commit. */
 @Service @RequiredArgsConstructor @Slf4j
 public class NotificationPushService {
     private final WebSocketSessionService sessions;
     private final SimpMessagingTemplate messaging;
+    private final NotificationRepository notifications;
+    private final PlatformTransactionManager transactionManager;
 
     /** Schedules a bell refresh only if the notification transaction commits. */
     public void afterCommit(Long owner, UUID notificationId) {
@@ -47,21 +53,28 @@ public class NotificationPushService {
         }
     }
 
-    /** Sends a refresh hint without rolling back committed business operations on transport failure. */
+    /** Reads committed unread groups and sends their count to uploader tabs, containing delivery failures. */
     private void send(Long owner, UUID notificationId) {
         log.debug("Sending uploader bell refresh. owner={}", owner);
         try {
+            TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+            transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            transaction.setReadOnly(true);
+            long unreadCount = transaction.execute(status ->
+                    (long) notifications.findByRecipientIdAndReadAtIsNullAndVisibleTrue(owner).size());
+            NotificationResponse.Change change = new NotificationResponse.Change(
+                    "NOTIFICATIONS_CHANGED", notificationId, unreadCount);
             for (String session : sessions.ownerRecipients(owner)) {
                 try {
                     messaging.convertAndSendToUser(session, "/queue/notifications",
-                            new NotificationResponse.Change("NOTIFICATIONS_CHANGED", notificationId));
+                            change);
                 } catch (RuntimeException exception) {
                     log.error("Bell refresh delivery failed. owner={}, session={}", owner, session, exception);
                 }
             }
-            log.debug("Bell refresh delivery completed. owner={}", owner);
+            log.debug("Bell refresh delivery completed. owner={}, unreadCount={}", owner, unreadCount);
         } catch (RuntimeException exception) {
-            log.error("Bell recipient lookup failed. owner={}", owner, exception);
+            log.error("Bell refresh preparation failed. owner={}", owner, exception);
         }
     }
 }
