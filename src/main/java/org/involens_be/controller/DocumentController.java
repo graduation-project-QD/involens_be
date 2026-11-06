@@ -35,6 +35,7 @@ import java.util.UUID;
 import org.involens_be.common.UserRole;
 import jakarta.validation.Valid;
 import org.involens_be.dto.request.DocumentListRequest;
+import org.involens_be.dto.request.DeleteDocumentsRequest;
 import org.involens_be.dto.response.DocumentListResponse;
 import org.involens_be.dto.response.DocumentDetailResponse;
 import org.involens_be.dto.response.ExtractionResultResponse;
@@ -58,25 +59,28 @@ public class DocumentController {
     private final DocumentService documentService;
     private final DocumentUploadService documentUploadService;
 
-    /** Marks a visible document inactive regardless of its processing state. */
-    @Operation(summary = "Deactivate document",
+    /** Deactivates all requested visible documents atomically using the authenticated caller's scope. */
+    @Operation(summary = "Deactivate documents",
             description = "Managers can deactivate any active document; employees can deactivate their own. "
-                    + "All processing states are supported. Only the document status changes to INACTIVE.",
+                    + "All processing states are supported. Only the document status changes to INACTIVE. "
+                    + "The documentIds list must be nonempty and contain non-null UUIDs. Duplicate IDs are processed once. "
+                    + "If any document is unavailable, no documents are changed.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Document deactivated"),
-            @ApiResponse(responseCode = "400", description = "Invalid document UUID"),
+            @ApiResponse(responseCode = "200", description = "Documents deactivated"),
+            @ApiResponse(responseCode = "400", description = "Missing or invalid documentIds list"),
             @ApiResponse(responseCode = "401", description = "JWT is missing or invalid"),
             @ApiResponse(responseCode = "404", description = "Document not found, inactive, or outside the caller's scope")
     })
-    @DeleteMapping("/{documentId}")
+    @DeleteMapping
     public BaseResponse<Void> deactivate(
-            @PathVariable UUID documentId,
+            @Valid @RequestBody DeleteDocumentsRequest request,
             @Parameter(hidden = true) @AuthenticationPrincipal Jwt jwt) {
         Long userId = readUserId(jwt);
         UserRole role = readRole(jwt);
-        log.info("Received document deactivation request. documentId={}, userId={}, role={}", documentId, userId, role);
-        documentService.deactivateDocument(documentId, userId, role);
+        log.info("Received document deactivation request. count={}, userId={}, role={}", request.getDocumentIds().size(), userId, role);
+        documentService.deactivateDocuments(request.getDocumentIds(), userId, role);
+        log.info("Document deactivation request completed. userId={}", userId);
         return BaseResponse.success(null);
     }
 

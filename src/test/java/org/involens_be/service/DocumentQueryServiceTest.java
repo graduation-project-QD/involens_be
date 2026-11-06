@@ -34,6 +34,7 @@ import org.springframework.data.jpa.domain.Specification;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -157,7 +158,7 @@ class DocumentQueryServiceTest {
             when(documents.findByIdAndUploadedByIdAndStatus(id, 12L, CommonStatus.ACTIVE))
                     .thenReturn(Optional.of(document));
 
-            service.deactivateDocument(id, 12L, UserRole.EMPLOYEE);
+            service.deactivateDocuments(List.of(id), 12L, UserRole.EMPLOYEE);
 
             assertEquals(CommonStatus.INACTIVE, document.getStatus());
             assertEquals(state, document.getCurrentState());
@@ -179,7 +180,7 @@ class DocumentQueryServiceTest {
                 .status(CommonStatus.ACTIVE).currentState(DocumentState.PROCESSING).build();
         when(documents.findByIdAndStatus(id, CommonStatus.ACTIVE)).thenReturn(Optional.of(document));
 
-        service.deactivateDocument(id, 12L, UserRole.MANAGER);
+        service.deactivateDocuments(List.of(id), 12L, UserRole.MANAGER);
 
         assertEquals(CommonStatus.INACTIVE, document.getStatus());
         assertEquals(DocumentState.PROCESSING, document.getCurrentState());
@@ -197,8 +198,8 @@ class DocumentQueryServiceTest {
                 .thenReturn(Optional.empty());
         when(documents.findByIdAndStatus(id, CommonStatus.ACTIVE)).thenReturn(Optional.empty());
 
-        assertThrows(DocumentNotFoundException.class, () -> service.deactivateDocument(id, 12L, UserRole.EMPLOYEE));
-        assertThrows(DocumentNotFoundException.class, () -> service.deactivateDocument(id, 12L, UserRole.MANAGER));
+        assertThrows(DocumentNotFoundException.class, () -> service.deactivateDocuments(List.of(id), 12L, UserRole.EMPLOYEE));
+        assertThrows(DocumentNotFoundException.class, () -> service.deactivateDocuments(List.of(id), 12L, UserRole.MANAGER));
 
         verify(documents, never()).save(any());
         verify(documents, never()).delete(any(DocumentEntity.class));
@@ -214,9 +215,53 @@ class DocumentQueryServiceTest {
                 .status(CommonStatus.ACTIVE).currentState(DocumentState.EXTRACT_SUCCESS).build();
         when(documents.findByIdAndUploadedByIdAndStatus(id, 12L, CommonStatus.ACTIVE))
                 .thenReturn(Optional.of(document), Optional.empty());
-        service.deactivateDocument(id, 12L, UserRole.EMPLOYEE);
-        assertThrows(DocumentNotFoundException.class, () -> service.deactivateDocument(id, 12L, UserRole.EMPLOYEE));
+        service.deactivateDocuments(List.of(id), 12L, UserRole.EMPLOYEE);
+        assertThrows(DocumentNotFoundException.class, () -> service.deactivateDocuments(List.of(id), 12L, UserRole.EMPLOYEE));
         verify(documents, times(1)).save(document);
+    }
+
+    /** Deactivates multiple visible documents while processing duplicate IDs only once. */
+    @Test
+    void batchDeactivationDeduplicatesIds() {
+        log.info("Testing batch deactivation with duplicate IDs");
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        var first = DocumentEntity.builder().id(firstId).status(CommonStatus.ACTIVE).build();
+        var second = DocumentEntity.builder().id(secondId).status(CommonStatus.ACTIVE).build();
+        when(documents.findByIdAndUploadedByIdAndStatus(firstId, 12L, CommonStatus.ACTIVE))
+                .thenReturn(Optional.of(first));
+        when(documents.findByIdAndUploadedByIdAndStatus(secondId, 12L, CommonStatus.ACTIVE))
+                .thenReturn(Optional.of(second));
+        service.deactivateDocuments(List.of(firstId, secondId, firstId), 12L, UserRole.EMPLOYEE);
+        assertEquals(CommonStatus.INACTIVE, first.getStatus());
+        assertEquals(CommonStatus.INACTIVE, second.getStatus());
+        verify(documents).findByIdAndUploadedByIdAndStatus(firstId, 12L, CommonStatus.ACTIVE);
+        verify(documents).save(first);
+        verify(documents).save(second);
+    }
+
+    /** Leaves the entire batch unchanged if a later document is unavailable to either role. */
+    @Test
+    void batchDeactivationChecksAllDocumentsBeforeChanges() {
+        log.info("Testing batch rejection without partial changes");
+        for (UserRole role : List.of(UserRole.EMPLOYEE, UserRole.MANAGER)) {
+            UUID firstId = UUID.randomUUID();
+            UUID unavailableId = UUID.randomUUID();
+            var first = DocumentEntity.builder().id(firstId).status(CommonStatus.ACTIVE).build();
+            if (role == UserRole.MANAGER) {
+                when(documents.findByIdAndStatus(firstId, CommonStatus.ACTIVE)).thenReturn(Optional.of(first));
+                when(documents.findByIdAndStatus(unavailableId, CommonStatus.ACTIVE)).thenReturn(Optional.empty());
+            } else {
+                when(documents.findByIdAndUploadedByIdAndStatus(firstId, 12L, CommonStatus.ACTIVE))
+                        .thenReturn(Optional.of(first));
+                when(documents.findByIdAndUploadedByIdAndStatus(unavailableId, 12L, CommonStatus.ACTIVE))
+                        .thenReturn(Optional.empty());
+            }
+            assertThrows(DocumentNotFoundException.class,
+                    () -> service.deactivateDocuments(List.of(firstId, unavailableId), 12L, role));
+            assertEquals(CommonStatus.ACTIVE, first.getStatus());
+        }
+        verify(documents, never()).save(any());
     }
 
     /** Verifies all state mappings while uploaded documents contribute only to the total. */

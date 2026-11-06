@@ -107,10 +107,12 @@ class DocumentQueryControllerTest {
     void deleteDeactivatesDocumentWithAuthenticatedScope() throws Exception {
         log.info("Testing document deactivation success response");
         UUID id = UUID.randomUUID();
-        mvc.perform(delete("/api/v1/documents/{documentId}", id))
+        UUID secondId = UUID.randomUUID();
+        mvc.perform(delete("/api/v1/documents").contentType("application/json")
+                        .content("{\"documentIds\":[\"" + id + "\",\"" + secondId + "\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value(0));
-        verify(queries).deactivateDocument(id, 12L, org.involens_be.common.UserRole.EMPLOYEE);
+        verify(queries).deactivateDocuments(List.of(id, secondId), 12L, org.involens_be.common.UserRole.EMPLOYEE);
     }
 
     /** Returns the existing not-found error for documents unavailable to the caller. */
@@ -119,8 +121,9 @@ class DocumentQueryControllerTest {
         log.info("Testing unavailable document deactivation response");
         UUID id = UUID.randomUUID();
         doThrow(new DocumentNotFoundException()).when(queries)
-                .deactivateDocument(id, 12L, org.involens_be.common.UserRole.EMPLOYEE);
-        mvc.perform(delete("/api/v1/documents/{documentId}", id))
+                .deactivateDocuments(List.of(id), 12L, org.involens_be.common.UserRole.EMPLOYEE);
+        mvc.perform(delete("/api/v1/documents").contentType("application/json")
+                        .content("{\"documentIds\":[\"" + id + "\"]}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("DOCUMENT_NOT_FOUND"));
     }
@@ -129,9 +132,23 @@ class DocumentQueryControllerTest {
     @Test
     void deleteInvalidUuidReturnsBadRequest() throws Exception {
         log.info("Testing invalid document deactivation identifier");
-        mvc.perform(delete("/api/v1/documents/not-a-uuid"))
+        mvc.perform(delete("/api/v1/documents").contentType("application/json")
+                        .content("{\"documentIds\":[\"not-a-uuid\"]}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        verifyNoInteractions(queries);
+    }
+
+    /** Rejects missing, empty, and null lists or elements before business deactivation runs. */
+    @Test
+    void deleteRejectsInvalidLists() throws Exception {
+        log.info("Testing deletion list validation");
+        for (String body : List.of("", "null", "{}", "{\"documentIds\":null}",
+                "{\"documentIds\":[]}", "{\"documentIds\":[null]}")) {
+            mvc.perform(delete("/api/v1/documents").contentType("application/json").content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        }
         verifyNoInteractions(queries);
     }
 

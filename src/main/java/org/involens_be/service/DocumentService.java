@@ -80,20 +80,26 @@ public class DocumentService {
     @org.springframework.beans.factory.annotation.Qualifier("publicMinioClient")
     private MinioClient publicMinioClient;
 
-    /** Deactivates an accessible active document while preserving its processing state and associated data. */
+    /** Validates all distinct documents before deactivating them in one transaction, preserving associated data. */
     @Transactional
-    public void deactivateDocument(UUID documentId, Long userId, UserRole role) {
-        log.info("Starting document deactivation. documentId={}", documentId);
+    public void deactivateDocuments(List<UUID> documentIds, Long userId, UserRole role) {
+        log.info("Starting document deactivation. count={}, userId={}", documentIds.size(), userId);
         try {
-            DocumentEntity document = findVisibleDocument(documentId, userId, role);
-            log.debug("Document authorized for deactivation. documentId={}, state={}", documentId, document.getCurrentState());
-            document.setStatus(CommonStatus.INACTIVE);
-            documentRepository.save(document);
+            var documents = new ArrayList<DocumentEntity>();
+            for (UUID documentId : new java.util.LinkedHashSet<>(documentIds)) {
+                documents.add(findVisibleDocument(documentId, userId, role));
+            }
+            log.debug("All documents authorized for deactivation. count={}, userId={}", documents.size(), userId);
+            for (DocumentEntity document : documents) {
+                document.setStatus(CommonStatus.INACTIVE);
+                documentRepository.save(document);
+            }
+            log.info("Document deactivation completed. count={}, userId={}", documents.size(), userId);
         } catch (DocumentNotFoundException exception) {
-            log.warn("Document deactivation rejected: active document not visible. documentId={}, userId={}", documentId, userId);
+            log.warn("Document deactivation rejected: an active document is not visible. userId={}", userId);
             throw exception;
         } catch (RuntimeException exception) {
-            log.error("Document deactivation failed. documentId={}, userId={}", documentId, userId, exception);
+            log.error("Document deactivation failed. userId={}", userId, exception);
             throw exception;
         }
     }
