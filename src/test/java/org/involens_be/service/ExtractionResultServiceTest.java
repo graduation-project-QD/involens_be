@@ -118,7 +118,7 @@ class ExtractionResultServiceTest {
     @BeforeEach
     void setUp() {
         org.slf4j.LoggerFactory.getLogger(getClass()).info("Preparing extraction-result service tests");
-        service = new DocumentService(documents,
+        service = new DocumentService(org.mockito.Mockito.mock(org.involens_be.service.DocumentThumbnailService.class), documents,
                 statusNotifications, notifications,
                 mock(UserRepository.class), Mappers.getMapper(DocumentMapper.class), extractionResults,
                 invoices, reviewTasks, invoiceItems);

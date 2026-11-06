@@ -18,6 +18,10 @@ import java.util.UUID;
 @Builder
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public class InvoiceListItemResponse {
+    @Expose
+    @JsonProperty("thumbnail_url")
+    @SerializedName("thumbnail_url")
+    private String thumbnailUrl;
     @Expose private UUID id;
     @Expose @JsonProperty("document_id") @SerializedName("document_id") private UUID documentId;
     @Expose @JsonProperty("original_filename") @SerializedName("original_filename") private String originalFilename;

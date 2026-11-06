@@ -22,8 +22,8 @@ public interface ReviewTaskMapper {
 
     /** Maps joined review-task data to the public list item and exposes its creation time as UTC. */
     @Mapping(target = "createdAt", expression = "java(toUtc(row.createdAt()))")
-    @Mapping(target = "reason", source = "reason", qualifiedByName = "vietnameseReason")
-    ReviewTaskListItemResponse toListItemResponse(ReviewTaskRepository.ReviewTaskRow row);
+    @Mapping(target = "reason", source = "row.reason", qualifiedByName = "vietnameseReason")
+    ReviewTaskListItemResponse toListItemResponse(ReviewTaskRepository.ReviewTaskRow row, String thumbnailUrl);
 
     /** Presents stored review concerns in Vietnamese without changing persisted AI diagnostics. */
     @Named("vietnameseReason")

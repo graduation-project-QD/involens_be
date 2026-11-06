@@ -66,6 +66,7 @@ class DocumentServiceTest {
     private ExtractionMessageService extractionMessageService;
 
     private DocumentUploadService documentUploadService;
+    @Mock private DocumentThumbnailService thumbnails;
     @Mock private DocumentStatusNotificationService statusNotifications;
     @Mock private NotificationService notifications;
 
@@ -74,7 +75,7 @@ class DocumentServiceTest {
     void setUp() {
         log.info("Setting up document upload service test");
         TransactionSynchronizationManager.initSynchronization();
-        documentUploadService = new DocumentUploadService(documentRepository,
+        documentUploadService = new DocumentUploadService(thumbnails, documentRepository,
                 statusNotifications, notifications, minioClient,
                 Mappers.getMapper(DocumentMapper.class), extractionMessageService);
         ReflectionTestUtils.setField(documentUploadService, "bucket", "test-documents");
@@ -87,6 +88,44 @@ class DocumentServiceTest {
         log.info("Clearing document upload transaction callbacks");
         TransactionSynchronizationManager.clearSynchronization();
         log.info("Document upload transaction callbacks cleared");
+    }
+
+    /** Persists the optional preview key and removes both stored objects if transaction commit rolls back. */
+    @Test
+    void storesThumbnailAndCleansBothObjectsOnRollback() throws Exception {
+        log.info("Testing thumbnail metadata and rollback compensation");
+        var file = new MockMultipartFile("files", "receipt.png", "image/png", new byte[]{1, 2, 3});
+        when(thumbnails.createAndStore(eq(file), eq("image/png"), anyString()))
+                .thenReturn("documents/preview.jpg");
+        when(documentRepository.saveAllAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        var response = documentUploadService.uploadDocuments(List.of(file), 12L);
+        assertEquals(UploadStatus.UPLOADED, response.getItems().getFirst().getUploadStatus());
+        ArgumentCaptor<List<DocumentEntity>> saved = ArgumentCaptor.forClass(List.class);
+        verify(documentRepository).saveAllAndFlush(saved.capture());
+        assertEquals("documents/preview.jpg", saved.getValue().getFirst().getThumbnailObjectKey());
+        TransactionSynchronizationManager.getSynchronizations().forEach(
+                callback -> callback.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+        var removed = ArgumentCaptor.forClass(RemoveObjectArgs.class);
+        verify(minioClient, times(2)).removeObject(removed.capture());
+        assertEquals(List.of(saved.getValue().getFirst().getObjectKey(), "documents/preview.jpg"),
+                removed.getAllValues().stream().map(RemoveObjectArgs::object).toList());
+        verifyNoInteractions(extractionMessageService);
+    }
+
+    /** Keeps the original uploaded and dispatches extraction when optional thumbnail generation fails. */
+    @Test
+    void missingThumbnailDoesNotFailUpload() {
+        log.info("Testing successful original upload without a preview");
+        var file = new MockMultipartFile("files", "receipt.png", "image/png", new byte[]{1, 2, 3});
+        when(thumbnails.createAndStore(eq(file), eq("image/png"), anyString())).thenReturn(null);
+        when(documentRepository.saveAllAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        var response = documentUploadService.uploadDocuments(List.of(file), 12L);
+        assertEquals(UploadStatus.UPLOADED, response.getItems().getFirst().getUploadStatus());
+        TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+        var dispatched = ArgumentCaptor.forClass(DocumentEntity.class);
+        verify(extractionMessageService).sendExtract(dispatched.capture());
+        assertNull(dispatched.getValue().getThumbnailObjectKey());
+        assertNull(dispatched.getValue().getErrorCode());
     }
 
     /** Verifies that unsupported files are persisted as failed without storage or AI dispatch after commit. */
@@ -134,7 +173,7 @@ class DocumentServiceTest {
 
         verify(minioClient).putObject(any(PutObjectArgs.class));
         verify(minioClient).removeObject(any(RemoveObjectArgs.class));
-        assertEquals(1, TransactionSynchronizationManager.getSynchronizations().size());
+        assertEquals(2, TransactionSynchronizationManager.getSynchronizations().size());
         TransactionSynchronizationManager.getSynchronizations().forEach(callback -> callback.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
         verify(notifications).recordUploadRollback(eq(12L), any());
         verifyNoInteractions(extractionMessageService);
@@ -191,7 +230,7 @@ class DocumentServiceTest {
         assertEquals("DUPLICATE_FILE", response.getItems().get(1).getErrorCode());
         verify(minioClient, times(1)).putObject(any(PutObjectArgs.class));
         verifyNoInteractions(extractionMessageService);
-        assertEquals(2, TransactionSynchronizationManager.getSynchronizations().size());
+        assertEquals(3, TransactionSynchronizationManager.getSynchronizations().size());
 
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
 

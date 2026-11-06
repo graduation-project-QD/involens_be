@@ -24,7 +24,7 @@ public interface InvoiceRepository extends JpaRepository<InvoiceEntity, UUID> {
     @Query(value = """
             select new org.involens_be.repository.InvoiceRepository$InvoiceListRow(
                 i.id, d.id, d.originalFilename, i.sellerName, i.invoiceNumber, i.invoiceDate,
-                i.totalAmount, i.currency, u.fullName, d.uploadedAt, d.currentState, d.errorCode, d.errorMessage)
+                i.totalAmount, i.currency, u.fullName, d.uploadedAt, d.currentState, d.errorCode, d.errorMessage, d.thumbnailObjectKey)
             from DocumentEntity d
             left join InvoiceEntity i on i.documentId = d.id
             left join UserEntity u on u.id = d.uploadedById
@@ -61,5 +61,5 @@ public interface InvoiceRepository extends JpaRepository<InvoiceEntity, UUID> {
     record InvoiceListRow(UUID id, UUID documentId, String originalFilename, String sellerName,
             String invoiceNumber, LocalDate invoiceDate, BigDecimal totalAmount, String currency,
             String uploadedByName, OffsetDateTime uploadedAt, DocumentState currentState,
-            String errorCode, String errorMessage) { }
+            String errorCode, String errorMessage, String thumbnailObjectKey) { }
 }

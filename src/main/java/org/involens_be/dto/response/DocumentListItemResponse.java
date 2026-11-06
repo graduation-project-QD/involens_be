@@ -14,6 +14,10 @@ import org.involens_be.common.DocumentState;
 @Builder
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public class DocumentListItemResponse {
+    @Expose
+    @JsonProperty("thumbnail_url")
+    @SerializedName("thumbnail_url")
+    private String thumbnailUrl;
 
     @Expose
     @JsonProperty("id")

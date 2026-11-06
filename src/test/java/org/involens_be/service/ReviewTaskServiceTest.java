@@ -29,12 +29,13 @@ import static org.mockito.Mockito.*;
 @lombok.extern.slf4j.Slf4j
 class ReviewTaskServiceTest {
     @Mock private ReviewTaskRepository reviewTasks;
+    @Mock private DocumentThumbnailService thumbnails;
     private ReviewTaskService service;
 
     /** Creates an isolated review-task service with the production mapper. */
     @BeforeEach
     void setUp() {
-        service = new ReviewTaskService(reviewTasks, Mappers.getMapper(ReviewTaskMapper.class));
+        service = new ReviewTaskService(thumbnails, reviewTasks, Mappers.getMapper(ReviewTaskMapper.class));
     }
 
     /** Restricts employees to owner-scoped querying and maps nullable vendor data and UTC timestamps. */
@@ -46,7 +47,7 @@ class ReviewTaskServiceTest {
         UUID documentId = UUID.randomUUID();
         var row = new ReviewTaskRepository.ReviewTaskRow(id, documentId, "receipt.jpg", null,
                 LocalDateTime.parse("2026-09-10T08:16:02"), "LOW_CONFIDENCE",
-                ReviewStatus.PENDING, 2);
+                ReviewStatus.PENDING, 2, null);
         when(reviewTasks.findVisibleTasks(eq(ReviewStatus.PENDING), eq(false), eq(12L), isNull(), isNull(), isNull(), any()))
                 .thenReturn(new PageImpl<>(List.of(row)));
 
@@ -62,6 +63,19 @@ class ReviewTaskServiceTest {
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(reviewTasks).findVisibleTasks(eq(ReviewStatus.PENDING), eq(false), eq(12L), isNull(), isNull(), isNull(), pageable.capture());
         assertEquals("priority: ASC,createdAt: DESC", pageable.getValue().getSort().toString().replace(", ", ","));
+    }
+
+    /** Exposes a signed preview from the document joined to an authorized review task. */
+    @Test
+    void listIncludesThumbnailUrl() {
+        log.info("Testing review list thumbnail mapping");
+        var row = new ReviewTaskRepository.ReviewTaskRow(UUID.randomUUID(), UUID.randomUUID(), "receipt.pdf", null,
+                LocalDateTime.now(), "LOW_CONFIDENCE", ReviewStatus.PENDING, 1, "documents/preview.jpg");
+        when(reviewTasks.findVisibleTasks(isNull(), eq(false), eq(12L), isNull(), isNull(), isNull(), any()))
+                .thenReturn(new PageImpl<>(List.of(row)));
+        when(thumbnails.createUrl("documents/preview.jpg")).thenReturn("https://storage.example/preview.jpg?signature=test");
+        var response = service.listReviewTasks(new ReviewTaskListRequest(), 12L, UserRole.EMPLOYEE);
+        assertEquals("https://storage.example/preview.jpg?signature=test", response.getItems().getFirst().getThumbnailUrl());
     }
 
     /** Translates stored backend errors and AI warnings while preserving unknown or empty diagnostics. */

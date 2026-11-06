@@ -15,6 +15,10 @@ import java.util.UUID;
 @Builder
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public class ReviewTaskListItemResponse {
+    @Expose
+    @JsonProperty("thumbnail_url")
+    @SerializedName("thumbnail_url")
+    private String thumbnailUrl;
 
     @Expose
     @JsonProperty("id")

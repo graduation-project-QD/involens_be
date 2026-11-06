@@ -1121,3 +1121,101 @@ Thời hạn token trong ví dụ phụ thuộc cấu hình; FE dùng giá trị
 - HTTP 400: thông tin không hợp lệ hoặc nhập lại mật khẩu không khớp, envelope `status=1`, `error.code=VALIDATION_ERROR`.
 - HTTP 409: email đã tồn tại, cùng lỗi email trùng của API tạo tài khoản.
 - Lỗi lưu tài khoản hoặc cấp/lưu token làm rollback transaction đăng ký; không trả thành công một phần.
+
+## Document thumbnails (2026-11-06)
+
+New image uploads (JPG/JPEG/PNG) and the first page of PDFs receive an optional JPEG thumbnail stored in the existing MinIO bucket. The preview is at most 256 pixels wide, preserves aspect ratio, is not upscaled, uses a white background and JPEG quality 80%.
+
+The database stores `documents.thumbnail_object_key`, not a signed URL. Apply `add_document_thumbnail.sql` before deploying where automatic schema updates are disabled. Existing rows retain NULL; no backfill is performed.
+
+Only `GET /api/v1/documents`, `GET /api/v1/invoices`, and `GET /api/v1/review-tasks` add `thumbnail_url` to each item. The signed URL expires after one hour. Missing thumbnails and URL signing failures return explicit `null`. Existing ownership, filtering and pagination rules apply. Notifications and detail responses do not receive this field.
+
+Thumbnail generation runs during upload and adds rendering/storage time. Decode errors (including unreadable or password-protected PDFs) and thumbnail storage failures are logged without failing the original upload or AI dispatch. Database/batch rollback attempts to remove both successfully stored originals and thumbnails; cleanup failures are logged.
+
+Frontend: display the URL in a 48 x 64 px frame with `object-fit: contain`; show a placeholder when null or loading fails. This backend change does not implement the frontend frame. Refresh the list when URLs expire.
+
+The following are illustrative full responses; URL signatures are placeholders, not usable credentials.
+
+### GET /api/v1/documents
+
+```json
+{
+  "status": 0,
+  "error": null,
+  "data": {
+    "items": [
+      {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "original_filename": "invoice.pdf",
+        "uploaded_by_name": "Nguyen Van A",
+        "uploaded_at": "2026-11-06T03:00:00Z",
+        "current_state": "REVIEW_REQUIRED",
+        "thumbnail_url": "https://storage.example/involens-documents/documents/invoice.pdf.thumbnail.jpg?X-Amz-Expires=3600&X-Amz-Signature=example"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 8
+  }
+}
+```
+
+### GET /api/v1/invoices
+
+```json
+{
+  "status": 0,
+  "error": null,
+  "data": {
+    "items": [
+      {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "document_id": "11111111-1111-4111-8111-111111111111",
+        "original_filename": "invoice.pdf",
+        "seller_name": "Cong ty ABC",
+        "invoice_number": "INV-001",
+        "invoice_date": "2026-11-06",
+        "total_amount": 1500000,
+        "currency": "VND",
+        "uploaded_by_name": "Nguyen Van A",
+        "uploaded_at": "2026-11-06T03:00:00Z",
+        "current_state": "REVIEW_REQUIRED",
+        "error_code": null,
+        "error_message": null,
+        "thumbnail_url": "https://storage.example/involens-documents/documents/invoice.pdf.thumbnail.jpg?X-Amz-Expires=3600&X-Amz-Signature=example"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 8
+  }
+}
+```
+
+### GET /api/v1/review-tasks
+
+```json
+{
+  "status": 0,
+  "error": null,
+  "data": {
+    "items": [
+      {
+        "id": "33333333-3333-4333-8333-333333333333",
+        "document_id": "11111111-1111-4111-8111-111111111111",
+        "document_filename": "invoice.pdf",
+        "vendor_name": "Cong ty ABC",
+        "created_at": "2026-11-06T03:00:10Z",
+        "reason": "Dữ liệu có độ tin cậy thấp.",
+        "status": "PENDING",
+        "thumbnail_url": "https://storage.example/involens-documents/documents/invoice.pdf.thumbnail.jpg?X-Amz-Expires=3600&X-Amz-Signature=example"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 8
+  }
+}
+```
+
+For an older document or failed thumbnail, the same item contains `"thumbnail_url": null`.

@@ -47,6 +47,7 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class DocumentUploadService {
+    private final DocumentThumbnailService thumbnails;
 
     private static final String UNSUPPORTED_FORMAT_CODE = "UNSUPPORTED_FORMAT";
     private static final String FILE_TOO_LARGE_CODE = "FILE_TOO_LARGE";
@@ -154,6 +155,15 @@ public class DocumentUploadService {
         List<DocumentEntity> documents = new ArrayList<>();
         List<String> uploadedObjectKeys = new ArrayList<>();
         Set<String> acceptedChecksums = new HashSet<>();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            /** Removes originals and previews on rollback, including persistence failures during commit. */
+            @Override public void afterCompletion(int status) {
+                log.debug("Checking document storage rollback cleanup. status={}", status);
+                if (status == TransactionSynchronization.STATUS_ROLLED_BACK) {
+                    removeUploadedObjects(uploadedObjectKeys);
+                }
+            }
+        });
 
         try {
             for (MultipartFile file : files) {
@@ -187,6 +197,12 @@ public class DocumentUploadService {
                     } else {
                         storeFile(files.get(index), document);
                         uploadedObjectKeys.add(document.getObjectKey());
+                        String thumbnailKey = thumbnails.createAndStore(files.get(index),
+                                document.getMimeType(), document.getObjectKey());
+                        document.setThumbnailObjectKey(thumbnailKey);
+                        if (thumbnailKey != null) {
+                            uploadedObjectKeys.add(thumbnailKey);
+                        }
                     }
                 }
             }
@@ -215,6 +231,7 @@ public class DocumentUploadService {
             log.error("Document batch upload failed; starting object storage compensation. uploadedById={}",
                     uploadedById, exception);
             removeUploadedObjects(uploadedObjectKeys);
+            uploadedObjectKeys.clear();
             throw new DocumentUploadBatchException("Không thể tải lên tài liệu. Toàn bộ batch đã được rollback", exception);
         }
     }

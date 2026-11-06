@@ -34,6 +34,9 @@ public class DocumentEntity {
     @Column(name = "object_key")
     private String objectKey;
 
+    @Column(name = "thumbnail_object_key")
+    private String thumbnailObjectKey;
+
     @Column(name = "checksum_sha256")
     private String checksumSha256;
 

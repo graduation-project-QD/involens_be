@@ -27,6 +27,22 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class ReviewTaskControllerTest {
+
+    /** Serializes signed thumbnail URLs and explicit nulls for documents without previews. */
+    @Test
+    void listReturnsThumbnailJsonContract() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(ReviewTaskControllerTest.class).info("Testing thumbnail HTTP response contract");
+        String url = "https://storage.example/preview.jpg?signature=test";
+        var preview = org.involens_be.dto.response.ReviewTaskListItemResponse.builder().thumbnailUrl(url).build();
+        var old = org.involens_be.dto.response.ReviewTaskListItemResponse.builder().build();
+        when(service.listReviewTasks(any(), eq(12L), eq(UserRole.EMPLOYEE)))
+                .thenReturn(ReviewTaskListResponse.builder().items(List.of(preview, old)).total(2).page(1).pageSize(8).build());
+        mvc.perform(get("/api/v1/review-tasks")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].thumbnail_url").value(url))
+                .andExpect(jsonPath("$.data.items[1].thumbnail_url").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.items[1]").value(org.hamcrest.Matchers.hasKey("thumbnail_url")));
+    }
+
     private ReviewTaskService service;
     private MockMvc mvc;
 

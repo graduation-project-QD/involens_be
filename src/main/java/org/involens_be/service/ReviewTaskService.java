@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class ReviewTaskService {
+    private final DocumentThumbnailService thumbnails;
 
     private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
@@ -53,7 +54,9 @@ public class ReviewTaskService {
                 Sort.by(Sort.Order.asc("priority"), Sort.Order.desc("createdAt")));
         var result = reviewTaskRepository.findVisibleTasks(request.getStatus(), manager, userId,
                 keywordPattern(request.getQ()), from, until, pageable);
-        var items = result.getContent().stream().map(reviewTaskMapper::toListItemResponse).toList();
+        var items = result.getContent().stream()
+                .map(row -> reviewTaskMapper.toListItemResponse(row, thumbnails.createUrl(row.thumbnailObjectKey())))
+                .toList();
         log.info("Review tasks loaded. userId={}, role={}, total={}, returned={}",
                 userId, role, result.getTotalElements(), items.size());
         return ReviewTaskListResponse.builder().items(items).total(result.getTotalElements())

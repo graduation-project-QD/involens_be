@@ -30,6 +30,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /** Verifies the dedicated invoice HTTP contract and rejects unsupported filters before querying. */
 @Slf4j
 class InvoiceControllerTest {
+
+    /** Serializes signed thumbnail URLs and explicit nulls for documents without previews. */
+    @Test
+    void listReturnsThumbnailJsonContract() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(InvoiceControllerTest.class).info("Testing thumbnail HTTP response contract");
+        String url = "https://storage.example/preview.jpg?signature=test";
+        var preview = org.involens_be.dto.response.InvoiceListItemResponse.builder().thumbnailUrl(url).build();
+        var old = org.involens_be.dto.response.InvoiceListItemResponse.builder().build();
+        when(service.listInvoices(any(), eq(99L), eq(UserRole.MANAGER)))
+                .thenReturn(InvoiceListResponse.builder().items(List.of(preview, old)).total(2).page(1).pageSize(8).build());
+        mvc.perform(get("/api/v1/invoices")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].thumbnail_url").value(url))
+                .andExpect(jsonPath("$.data.items[1].thumbnail_url").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.items[1]").value(org.hamcrest.Matchers.hasKey("thumbnail_url")));
+    }
+
     private InvoiceService service;
     private MockMvc mvc;
 

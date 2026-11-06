@@ -46,7 +46,24 @@ class DocumentQueryServiceTest {
     @Mock private DocumentRepository documents;
     @Mock private UserRepository users;
     @Mock private ExtractionResultRepository extractionResults;
+    @Mock private DocumentThumbnailService thumbnails;
     private DocumentService service;
+
+    /** Adds signed previews to visible document rows and preserves null for previously uploaded documents. */
+    @Test
+    void listIncludesOptionalThumbnailUrl() {
+        log.info("Testing document list thumbnail mapping");
+        var recent = DocumentEntity.builder().id(UUID.randomUUID()).uploadedById(12L)
+                .thumbnailObjectKey("documents/preview.jpg").build();
+        var old = DocumentEntity.builder().id(UUID.randomUUID()).uploadedById(12L).build();
+        when(documents.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(recent, old)));
+        when(thumbnails.createUrl("documents/preview.jpg")).thenReturn("https://storage.example/preview.jpg?signature=test");
+        var response = service.listDocuments(new DocumentListRequest(), 12L, UserRole.EMPLOYEE);
+        assertEquals("https://storage.example/preview.jpg?signature=test", response.getItems().getFirst().getThumbnailUrl());
+        assertNull(response.getItems().getLast().getThumbnailUrl());
+        assertEquals(2, response.getTotal());
+    }
 
     /** Generates real local signatures for images and PDFs with an hour-long expiry without network calls. */
     @Test
@@ -277,7 +294,7 @@ class DocumentQueryServiceTest {
     @BeforeEach
     void setUp() {
         log.info("Preparing document query tests");
-        service = new DocumentService(documents, mock(DocumentStatusNotificationService.class), mock(NotificationService.class), users,
+        service = new DocumentService(thumbnails, documents, mock(DocumentStatusNotificationService.class), mock(NotificationService.class), users,
                 Mappers.getMapper(DocumentMapper.class), extractionResults,
                 mock(org.involens_be.repository.InvoiceRepository.class),
                 mock(org.involens_be.repository.ReviewTaskRepository.class),

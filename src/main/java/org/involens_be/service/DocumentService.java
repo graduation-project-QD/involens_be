@@ -60,6 +60,7 @@ import java.math.BigDecimal;
 @Service
 @RequiredArgsConstructor
 public class DocumentService {
+    private final DocumentThumbnailService thumbnails;
 
     private final DocumentRepository documentRepository;
     private final DocumentStatusNotificationService statusNotifications;
@@ -139,7 +140,7 @@ public class DocumentService {
         var items = page.getContent().stream()
                 .map(document -> documentMapper.toListItemResponse(document,
                         userRepository.findById(document.getUploadedById())
-                                .map(UserEntity::getFullName).orElse(null)))
+                                .map(UserEntity::getFullName).orElse(null), thumbnails.createUrl(document.getThumbnailObjectKey())))
                 .toList();
         return DocumentListResponse.builder().items(items).total(page.getTotalElements())
                 .page(request.getPage()).pageSize(request.getPage_size()).build();

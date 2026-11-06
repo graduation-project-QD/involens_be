@@ -21,6 +21,7 @@ import java.util.Locale;
 @Service
 @RequiredArgsConstructor
 public class InvoiceService {
+    private final DocumentThumbnailService thumbnails;
     private final InvoiceRepository invoices;
 
     /** Lists selected extraction states for managers globally or employees within their uploads. */
@@ -53,6 +54,7 @@ public class InvoiceService {
     private InvoiceListItemResponse toListItem(InvoiceRepository.InvoiceListRow row) {
         log.debug("Mapping extracted invoice list item. documentId={}, state={}", row.documentId(), row.currentState());
         return InvoiceListItemResponse.builder().id(row.id()).documentId(row.documentId())
+                .thumbnailUrl(thumbnails.createUrl(row.thumbnailObjectKey()))
                 .originalFilename(row.originalFilename()).sellerName(row.sellerName())
                 .invoiceNumber(row.invoiceNumber()).invoiceDate(row.invoiceDate())
                 .totalAmount(row.totalAmount()).currency(row.currency()).uploadedByName(row.uploadedByName())

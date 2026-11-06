@@ -276,3 +276,15 @@ curl --location --request POST \
 | 404 | `DOCUMENT_NOT_FOUND` | Document không tồn tại, inactive hoặc không thuộc user |
 | 404 | `EXTRACTION_RESULT_NOT_FOUND` | Document chưa có extraction result |
 | 500 | `DOCUMENT_UPLOAD_FAILED` | Batch upload thất bại do storage hoặc persistence |
+
+## Thumbnail upload and list flow
+
+1. Validate uploads and reject duplicates using the existing rules.
+2. Store the original file in MinIO.
+3. Render the image or first PDF page into a JPEG (maximum width 256 px, proportional, white background, quality 80%, no upscaling) and store it in the same bucket.
+4. Store the optional thumbnail object key with document metadata. Preview failures are logged and leave the key null while the original upload succeeds.
+5. Dispatch AI extraction after commit as before. Rollback cleanup includes both original and thumbnail objects.
+6. The documents, invoices and review-tasks list APIs sign `thumbnail_url` for one hour within existing authorization scope. Old documents, failed previews and signing failures return null. Invoice/review queries select the key in their existing joins.
+7. The frontend displays the thumbnail within a 48 x 64 px frame using `object-fit: contain` and a placeholder for missing images.
+
+Schema change: `add_document_thumbnail.sql` adds nullable `documents.thumbnail_object_key`; no old-file backfill. See API_DOCUMENTATION.md for full updated response examples.

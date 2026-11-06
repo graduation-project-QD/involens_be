@@ -29,7 +29,7 @@ public interface DocumentMapper {
     /** Maps document metadata and an uploader display name to a list item returned by the document API. */
     @Mapping(target = "uploadedByName", source = "uploaderName")
     @Mapping(target = "uploadedAt", expression = "java(toUtc(document.getUploadedAt()))")
-    DocumentListItemResponse toListItemResponse(DocumentEntity document, String uploaderName);
+    DocumentListItemResponse toListItemResponse(DocumentEntity document, String uploaderName, String thumbnailUrl);
 
     /** Maps document metadata and uploader information to the detailed document API response. */
     @Mapping(target = "uploadedBy", expression = "java(toUploaderResponse(document.getUploadedById(), uploaderName))")

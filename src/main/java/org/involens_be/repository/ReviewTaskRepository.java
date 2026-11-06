@@ -21,7 +21,7 @@ public interface ReviewTaskRepository extends JpaRepository<ReviewTaskEntity, UU
     /** Pages review tasks matching filename, uploader and upload dates under the caller's ownership scope. */
     @Query(value = """
             select new org.involens_be.repository.ReviewTaskRepository$ReviewTaskRow(
-                rt.id, d.id, d.originalFilename, i.sellerName, rt.createdAt, rt.reason, rt.status, rt.priority)
+                rt.id, d.id, d.originalFilename, i.sellerName, rt.createdAt, rt.reason, rt.status, rt.priority, d.thumbnailObjectKey)
             from ReviewTaskEntity rt
             join ExtractionResultEntity er on er.id = rt.extractionResultId
             join DocumentEntity d on d.id = er.documentId
@@ -71,6 +71,6 @@ public interface ReviewTaskRepository extends JpaRepository<ReviewTaskEntity, UU
             LocalDateTime createdAt,
             String reason,
             ReviewStatus status,
-            Integer priority) {
+            Integer priority, String thumbnailObjectKey) {
     }
 }
