@@ -27,6 +27,102 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class AuthControllerTest {
 
+    /** Returns creation time instead of role in the current-user JSON while retaining the response envelope. */
+    @Test void currentProfileReturnsCreationTimeWithoutRole() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing current profile JSON contract");
+        when(service.getCurrentUser(any())).thenReturn(org.involens_be.dto.response.CurrentUserResponse.builder()
+                .id(12L).email("user@example.com").fullName("User")
+                .createdAt(java.time.LocalDateTime.of(2026, 11, 6, 10, 30)).build());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/auth/me")
+                        .principal(SecurityContextHolder.getContext().getAuthentication()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value(0))
+                .andExpect(jsonPath("$.data.id").value(12))
+                .andExpect(jsonPath("$.data.email").value("user@example.com"))
+                .andExpect(jsonPath("$.data.fullName").value("User"))
+                .andExpect(jsonPath("$.data.createdAt").value("2026-11-06T10:30:00"))
+                .andExpect(jsonPath("$.data.role").doesNotExist());
+    }
+
+    /** The real security filter permits anonymous registration while manager account creation still requires a token. */
+    @Test void securityAllowsOnlyPublicRegistrationWithoutToken() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing registration through the real security filter");
+        SecurityContextHolder.clearContext();
+        try (var context = new org.springframework.web.context.support.GenericWebApplicationContext()) {
+            context.setServletContext(new org.springframework.mock.web.MockServletContext());
+            context.getEnvironment().getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource("registration-test",
+                    java.util.Map.of("app.jwt.secret", "registration-test-secret-with-at-least-32-bytes",
+                            "app.jwt.issuer", "registration-test", "app.cors.allowed-origins", "http://localhost:5173")));
+            context.registerBean(org.involens_be.config.AccountTokenValidator.class,
+                    () -> mock(org.involens_be.config.AccountTokenValidator.class));
+            new org.springframework.context.annotation.AnnotatedBeanDefinitionReader(context).register(
+                    RegistrationSecurityTestConfig.class, org.involens_be.config.SecurityConfig.class);
+            context.refresh();
+            var securedMvc = MockMvcBuilders.standaloneSetup(new AuthController(service))
+                    .setControllerAdvice(new GlobalExceptionHandler())
+                    .addFilters(context.getBean(org.springframework.security.web.FilterChainProxy.class)).build();
+            when(service.register(any())).thenReturn(org.involens_be.dto.response.LoginResponse.builder().accessToken("access").build());
+            String body = """
+                    {"email":"new@example.com","password":"Example@123","confirmPassword":"Example@123","fullName":"User"}
+                    """;
+            securedMvc.perform(post("/api/v1/auth/register").contentType("application/json").content(body))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.accessToken").value("access"));
+            securedMvc.perform(post("/api/v1/auth/create-accounts").contentType("application/json").content(body))
+                    .andExpect(status().isUnauthorized());
+            verify(service, never()).createAccount(any(), any());
+        }
+    }
+
+    /** Enables production security wiring in an isolated context without a database or application startup. */
+    @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
+    @org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
+    static class RegistrationSecurityTestConfig { }
+
+    /** Public registration requires no principal and returns the same token contract as login. */
+    @Test void registersWithoutPrincipalAndReturnsLoginTokens() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing public registration HTTP contract");
+        SecurityContextHolder.clearContext();
+        when(service.register(any())).thenReturn(org.involens_be.dto.response.LoginResponse.builder()
+                .accessToken("access").refreshToken("refresh").expiresIn(3600).refreshExpiresIn(604800)
+                .user(AuthUserResponse.builder().id(44L).email("new@example.com").fullName("User").role(UserRole.EMPLOYEE).build()).build());
+        mvc.perform(post("/api/v1/auth/register").contentType("application/json").content("""
+                {"email":"new@example.com","password":"Example@123","confirmPassword":"Example@123","fullName":"User"}
+                """))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value(0))
+                .andExpect(jsonPath("$.data.accessToken").value("access"))
+                .andExpect(jsonPath("$.data.refreshToken").value("refresh"))
+                .andExpect(jsonPath("$.data.user.role").value("EMPLOYEE"));
+    }
+
+    /** Missing fields, weak passwords and mismatching confirmation are rejected before account creation. */
+    @Test void registrationRejectsInvalidDetails() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing public registration validation");
+        SecurityContextHolder.clearContext();
+        String valid = """
+                {"email":"new@example.com","password":"Example@123","confirmPassword":"Example@123","fullName":"User"}
+                """;
+        for (String body : java.util.List.of("{}", valid.replace("new@example.com", "invalid-email"),
+                valid.replace("\"fullName\":\"User\"", "\"fullName\":\" \""),
+                valid.replace("\"confirmPassword\":\"Example@123\"", "\"confirmPassword\":\"Different@123\""),
+                valid.replace("\"confirmPassword\":\"Example@123\"", "\"confirmPassword\":null"),
+                valid.replace("Example@123", "Short@"), valid.replace("Example@123", "lowercase@123"),
+                valid.replace("Example@123", "NoSpecial123"), valid.replace("Example@123", "Has Space@123"))) {
+            mvc.perform(post("/api/v1/auth/register").contentType("application/json").content(body))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        }
+        verifyNoInteractions(service);
+    }
+
+    /** Existing emails retain the established conflict response for public registration. */
+    @Test void registrationReturnsEmailConflict() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing public registration duplicate email response");
+        SecurityContextHolder.clearContext();
+        when(service.register(any())).thenThrow(new EmailAlreadyExistsException());
+        mvc.perform(post("/api/v1/auth/register").contentType("application/json").content("""
+                {"email":"new@example.com","password":"Example@123","confirmPassword":"Example@123","fullName":"User"}
+                """))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.status").value(1));
+    }
+
     /** Returns the full rotated credential pair without needing an authenticated controller principal. */
     @Test
     void refreshReturnsTokenPair() throws Exception {

@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.involens_be.dto.request.LoginRequest;
 import org.involens_be.dto.request.CreateUserAccountRequest;
 import org.involens_be.dto.response.AuthUserResponse;
+import org.involens_be.dto.response.CurrentUserResponse;
 import org.involens_be.dto.response.LoginResponse;
 import org.involens_be.entity.UserEntity;
 import org.involens_be.common.UserRole;
@@ -40,6 +41,33 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final UserMapper userMapper;
     private final RefreshTokenService refreshTokenService;
+
+    /** Creates an active employee and their first login session atomically from validated public registration details. */
+    @Transactional
+    public LoginResponse register(org.involens_be.dto.request.RegisterRequest request) {
+        String email = request.getEmail().trim();
+        log.info("Starting public account registration. email={}", email);
+        if (userRepository.existsByEmailIgnoreCase(email)) {
+            log.warn("Registration rejected because email already exists. email={}", email);
+            throw new EmailAlreadyExistsException();
+        }
+        try {
+            UserEntity user = UserEntity.builder()
+                    .email(email)
+                    .passwordHash(passwordEncoder.encode(request.getPassword()))
+                    .fullName(request.getFullName().trim())
+                    .role(UserRole.EMPLOYEE)
+                    .status(CommonStatus.ACTIVE)
+                    .build();
+            UserEntity savedUser = userRepository.saveAndFlush(user);
+            LoginResponse response = refreshTokenService.issue(savedUser);
+            log.info("Registration and initial session prepared successfully. userId={}", savedUser.getId());
+            return response;
+        } catch (RuntimeException exception) {
+            log.error("Public registration failed; rolling back account and initial session. email={}", email, exception);
+            throw exception;
+        }
+    }
 
     /** Returns management information for an active account after checking manager access. */
     public AccountListItemResponse getAccount(Long id, UserRole role) {
@@ -262,7 +290,7 @@ public class AuthService {
      * @param authentication validated JWT authentication
      * @return current user's public profile
      */
-    public AuthUserResponse getCurrentUser(Authentication authentication) {
+    public CurrentUserResponse getCurrentUser(Authentication authentication) {
         String email = authentication.getName();
         log.info("Loading current authenticated user. email={}", email);
         UserEntity user = userRepository.findByEmailIgnoreCase(email)
@@ -275,6 +303,6 @@ public class AuthService {
             throw new InvalidCredentialsException("Account not found");
         }
         log.info("Current authenticated user loaded successfully. userId={}", user.getId());
-        return userMapper.toAuthUserResponse(user);
+        return userMapper.toCurrentUserResponse(user);
     }
 }

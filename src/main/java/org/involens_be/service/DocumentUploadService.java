@@ -62,6 +62,7 @@ public class DocumentUploadService {
 
     private final DocumentRepository documentRepository;
     private final DocumentStatusNotificationService statusNotifications;
+    private final NotificationService notifications;
     private final MinioClient minioClient;
     private final DocumentMapper documentMapper;
     private final ExtractionMessageService extractionMessageService;
@@ -104,6 +105,7 @@ public class DocumentUploadService {
             throw new DocumentRetryException(DocumentRetryException.Reason.PERSISTENCE_FAILED,
                     "Không thể lưu trạng thái tài liệu sau khi gửi yêu cầu sang AI.", exception);
         }
+        notifications.recordOutcome(document);
         statusNotifications.afterCommit(document, previousState);
         if (!published) {
             log.warn("Document extraction retry failed; pending failure state saved. documentId={}", documentId);
@@ -148,6 +150,7 @@ public class DocumentUploadService {
     @Transactional
     public DocumentUploadResponse uploadDocuments(List<MultipartFile> files, Long uploadedById) {
         log.info("Starting document batch upload. uploadedById={}, fileCount={}", uploadedById, files.size());
+        registerUploadRollbackNotification(files, uploadedById);
         List<DocumentEntity> documents = new ArrayList<>();
         List<String> uploadedObjectKeys = new ArrayList<>();
         Set<String> acceptedChecksums = new HashSet<>();
@@ -189,6 +192,7 @@ public class DocumentUploadService {
             }
 
             List<DocumentEntity> savedDocuments = documentRepository.saveAllAndFlush(documents);
+            savedDocuments.forEach(notifications::recordOutcome);
             savedDocuments.forEach(document -> statusNotifications.afterCommit(document, null));
             List<DocumentEntity> uploadedDocuments = savedDocuments.stream()
                     .filter(document -> document.getUploadStatus() == UploadStatus.UPLOADED)
@@ -213,6 +217,27 @@ public class DocumentUploadService {
             removeUploadedObjects(uploadedObjectKeys);
             throw new DocumentUploadBatchException("Không thể tải lên tài liệu. Toàn bộ batch đã được rollback", exception);
         }
+    }
+
+    /** Captures filenames and persists a separate failure only after the upload transaction rolls back. */
+    private void registerUploadRollbackNotification(List<MultipartFile> files, Long owner) {
+        log.debug("Registering upload rollback notification. owner={}, count={}", owner, files.size());
+        Map<UUID, String> failedFiles = new java.util.LinkedHashMap<>();
+        files.forEach(file -> failedFiles.put(UUID.randomUUID(), normalizeFilename(file.getOriginalFilename())));
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            /** Records failed files outside the rolled-back transaction without masking the original upload error. */
+            @Override public void afterCompletion(int status) {
+                log.debug("Upload transaction completed. owner={}, status={}", owner, status);
+                if (status != TransactionSynchronization.STATUS_ROLLED_BACK) {
+                    return;
+                }
+                try {
+                    notifications.recordUploadRollback(owner, failedFiles);
+                } catch (RuntimeException exception) {
+                    log.error("Cannot persist rolled-back upload notification. owner={}", owner, exception);
+                }
+            }
+        });
     }
 
     /**

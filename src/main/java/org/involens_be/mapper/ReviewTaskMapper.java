@@ -41,6 +41,9 @@ public interface ReviewTaskMapper {
     /** Translates known backend diagnostics and AI warnings, preserving unrecognized concerns verbatim. */
     private String translateConcern(String concern) {
         LOG.debug("Mapping a review concern to its Vietnamese description");
+        if ("FIELD_ABSENT".equals(concern)) {
+            return "Trích xuất thiếu trường dữ liệu";
+        }
         if ("LOW_CONFIDENCE".equals(concern)) {
             return "Dữ liệu có độ tin cậy thấp.";
         }
@@ -51,6 +54,9 @@ public interface ReviewTaskMapper {
                     var object = warning.getAsJsonObject();
                     var code = object.get("code");
                     var target = object.get("target");
+                    if (code != null && code.isJsonPrimitive() && "FIELD_ABSENT".equals(code.getAsString())) {
+                        return "Trích xuất thiếu trường dữ liệu";
+                    }
                     if (code != null && code.isJsonPrimitive() && "LOW_CONFIDENCE".equals(code.getAsString())) {
                         return target != null && target.isJsonPrimitive()
                                 ? fieldLabel(target.getAsString()) + " có độ tin cậy thấp."

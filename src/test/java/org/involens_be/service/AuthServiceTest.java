@@ -22,6 +22,88 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
 
+    /** Loads the persisted creation time through the real profile mapper for an active current user. */
+    @Test void currentProfileIncludesCreationTime() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing current profile creation-time mapping");
+        var createdAt = java.time.LocalDateTime.of(2026, 11, 6, 10, 30);
+        var user = UserEntity.builder().id(12L).email("user@example.com").fullName("User")
+                .role(UserRole.MANAGER).status(CommonStatus.ACTIVE).createdAt(createdAt).build();
+        when(users.findByEmailIgnoreCase("user@example.com")).thenReturn(java.util.Optional.of(user));
+        var profileService = new AuthService(users, passwordEncoder,
+                org.mapstruct.factory.Mappers.getMapper(UserMapper.class), refreshTokenService);
+        var response = profileService.getCurrentUser(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("user@example.com", null));
+        assertEquals(12L, response.getId());
+        assertEquals("user@example.com", response.getEmail());
+        assertEquals("User", response.getFullName());
+        assertEquals(createdAt, response.getCreatedAt());
+        verifyNoInteractions(refreshTokenService, passwordEncoder);
+    }
+
+    /** Public registration fixes employee privileges, hashes the password and issues the initial login response. */
+    @Test void registersActiveEmployeeAndIssuesTokens() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing public registration and automatic login");
+        var request = new org.involens_be.dto.request.RegisterRequest("new@example.com", "Example@123", " New User ", "Example@123");
+        when(passwordEncoder.encode("Example@123")).thenReturn("encoded-password");
+        when(users.saveAndFlush(any())).thenAnswer(invocation -> {
+            UserEntity user = invocation.getArgument(0);
+            user.setId(44L);
+            return user;
+        });
+        var expected = org.involens_be.dto.response.LoginResponse.builder().accessToken("access").refreshToken("refresh").build();
+        when(refreshTokenService.issue(any())).thenReturn(expected);
+        assertSame(expected, service.register(request));
+        ArgumentCaptor<UserEntity> saved = ArgumentCaptor.forClass(UserEntity.class);
+        var order = inOrder(users, refreshTokenService);
+        order.verify(users).existsByEmailIgnoreCase("new@example.com");
+        order.verify(users).saveAndFlush(saved.capture());
+        order.verify(refreshTokenService).issue(saved.getValue());
+        assertEquals(UserRole.EMPLOYEE, saved.getValue().getRole());
+        assertEquals(CommonStatus.ACTIVE, saved.getValue().getStatus());
+        assertEquals("New User", saved.getValue().getFullName());
+        assertEquals("encoded-password", saved.getValue().getPasswordHash());
+    }
+
+    /** Duplicate email registration never persists an account or creates a login session. */
+    @Test void registrationRejectsExistingEmail() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing duplicate registration email");
+        when(users.existsByEmailIgnoreCase("Existing@example.com")).thenReturn(true);
+        var request = new org.involens_be.dto.request.RegisterRequest("Existing@example.com", "Example@123", "User", "Example@123");
+        assertThrows(EmailAlreadyExistsException.class, () -> service.register(request));
+        verify(users, never()).saveAndFlush(any());
+        verifyNoInteractions(passwordEncoder, refreshTokenService);
+    }
+
+    /** Spring rolls back registration rather than committing an account when initial session issuance fails. */
+    @Test void registrationRollsBackWhenTokenIssuanceFails() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing registration transaction rollback");
+        var transactionManager = mock(org.springframework.transaction.PlatformTransactionManager.class);
+        var status = mock(org.springframework.transaction.TransactionStatus.class);
+        when(transactionManager.getTransaction(any())).thenReturn(status);
+        var interceptor = new org.springframework.transaction.interceptor.TransactionInterceptor(transactionManager,
+                new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource());
+        var factory = new org.springframework.aop.framework.ProxyFactory(service);
+        factory.addAdvice(interceptor);
+        var transactionalService = (AuthService) factory.getProxy();
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(users.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(refreshTokenService.issue(any())).thenThrow(new IllegalStateException("Token signing unavailable"));
+        var request = new org.involens_be.dto.request.RegisterRequest("new@example.com", "Example@123", "User", "Example@123");
+        assertThrows(IllegalStateException.class, () -> transactionalService.register(request));
+        verify(transactionManager).rollback(status);
+        verify(transactionManager, never()).commit(any());
+    }
+
+    /** Persistence failure cannot produce a token for an account that was not saved. */
+    @Test void registrationDoesNotIssueTokensAfterPersistenceFailure() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing registration persistence failure");
+        when(passwordEncoder.encode(anyString())).thenReturn("encoded");
+        when(users.saveAndFlush(any())).thenThrow(new IllegalStateException("Database unavailable"));
+        var request = new org.involens_be.dto.request.RegisterRequest("new@example.com", "Example@123", "User", "Example@123");
+        assertThrows(IllegalStateException.class, () -> service.register(request));
+        verifyNoInteractions(refreshTokenService);
+    }
+
     /** Delegates refresh rotation and current-session logout to the transactional credential service. */
     @Test
     void delegatesRefreshAndLogout() {

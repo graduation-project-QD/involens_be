@@ -63,6 +63,7 @@ public class DocumentService {
 
     private final DocumentRepository documentRepository;
     private final DocumentStatusNotificationService statusNotifications;
+    private final NotificationService notifications;
     private final UserRepository userRepository;
     private final DocumentMapper documentMapper;
     private final ExtractionResultRepository extractionResultRepository;
@@ -242,6 +243,7 @@ public class DocumentService {
         extractionResultRepository.save(extractionResult);
         documentRepository.save(document);
         reviewTaskRepository.saveAll(reviewTasks);
+        notifications.recordApproval(document, previousState, reviewerId);
         statusNotifications.afterCommit(document, previousState);
         var items = loadInvoiceItems(savedInvoice.getId());
         var response = UpdateExtractionResultResponse.builder()

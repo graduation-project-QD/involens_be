@@ -9,7 +9,6 @@ import org.involens_be.common.CommonStatus;
 import org.involens_be.common.DocumentState;
 import org.involens_be.common.UploadStatus;
 import org.involens_be.entity.DocumentEntity;
-import org.involens_be.repository.DocumentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,19 +48,18 @@ class ExtractionMessageServiceTest {
     @Mock
     private RabbitTemplate rabbitTemplate;
 
-    @Mock
-    private DocumentRepository documentRepository;
 
     private ExtractionMessageService extractionMessageService;
     private DocumentEntity document;
     @Mock private DocumentStatusNotificationService statusNotifications;
+    @Mock private NotificationService notifications;
 
     /** Prepares an uploaded document and extraction routing without contacting RabbitMQ or the database. */
     @BeforeEach
     void setUp() {
         log.info("Setting up extraction dispatch test");
-        extractionMessageService = new ExtractionMessageService(rabbitTemplate, new Gson(), documentRepository,
-                statusNotifications,
+        extractionMessageService = new ExtractionMessageService(rabbitTemplate, new Gson(),
+                statusNotifications, notifications,
                 org.mockito.Mockito.mock(AiExtractionResultService.class));
         ReflectionTestUtils.setField(extractionMessageService, "enabled", true);
         ReflectionTestUtils.setField(extractionMessageService, "extractExchange", "test-extraction");
@@ -87,21 +85,19 @@ class ExtractionMessageServiceTest {
     void sendExtractPublishesDocumentBeforeMarkingProcessing(String extension) {
         log.info("Testing processing transition after successful extraction dispatch");
         document.setObjectKey("2026/10/receipt." + extension);
-        when(documentRepository.updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null)).thenReturn(1);
+        when(notifications.recordDispatch(document, DocumentState.PROCESSING)).thenReturn(1);
 
         extractionMessageService.sendExtract(document);
 
         ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
-        InOrder dispatchOrder = inOrder(rabbitTemplate, documentRepository, statusNotifications);
+        InOrder dispatchOrder = inOrder(rabbitTemplate, notifications, statusNotifications);
         dispatchOrder.verify(rabbitTemplate).send(
                 eq("test-extraction"), eq("test-extract"), messageCaptor.capture());
-        dispatchOrder.verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null);
+        dispatchOrder.verify(notifications).recordDispatch(document, DocumentState.PROCESSING);
         dispatchOrder.verify(statusNotifications).notifyCommitted(org.mockito.ArgumentMatchers.argThat(
                 event -> event.payload().documentId().equals(document.getId())
                         && event.payload().currentState() == DocumentState.PROCESSING));
-        verifyNoMoreInteractions(rabbitTemplate, documentRepository);
+        verifyNoMoreInteractions(rabbitTemplate, notifications);
 
         Message message = messageCaptor.getValue();
         assertEquals(MessageProperties.CONTENT_TYPE_JSON, message.getMessageProperties().getContentType());
@@ -133,9 +129,7 @@ class ExtractionMessageServiceTest {
 
         verify(signer, times(4)).getPresignedObjectUrl(any());
         verifyNoInteractions(rabbitTemplate);
-        verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PENDING_FAILURE,
-                ExtractionMessageService.DISPATCH_FAILED_CODE, ExtractionMessageService.DISPATCH_FAILED_MESSAGE);
+        verify(notifications).recordDispatch(document, DocumentState.PENDING_FAILURE);
         log.info("URL signing failure dispatch test completed");
     }
 
@@ -157,7 +151,7 @@ class ExtractionMessageServiceTest {
         JsonObject payload = JsonParser.parseString(
                 new String(messageCaptor.getValue().getBody(), StandardCharsets.UTF_8)).getAsJsonObject();
         assertEquals(url, payload.get("url").getAsString());
-        verifyNoInteractions(documentRepository);
+        verifyNoInteractions(notifications);
         log.info("URL signing retry recovery test completed");
     }
 
@@ -168,17 +162,15 @@ class ExtractionMessageServiceTest {
         doThrow(new AmqpException("temporary RabbitMQ failure"))
                 .doNothing()
                 .when(rabbitTemplate).send(eq("test-extraction"), eq("test-extract"), any(Message.class));
-        when(documentRepository.updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null)).thenReturn(1);
+        when(notifications.recordDispatch(document, DocumentState.PROCESSING)).thenReturn(1);
 
         extractionMessageService.sendExtract(document);
 
-        InOrder dispatchOrder = inOrder(rabbitTemplate, documentRepository);
+        InOrder dispatchOrder = inOrder(rabbitTemplate, notifications);
         dispatchOrder.verify(rabbitTemplate, times(2)).send(
                 eq("test-extraction"), eq("test-extract"), any(Message.class));
-        dispatchOrder.verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null);
-        verifyNoMoreInteractions(rabbitTemplate, documentRepository);
+        dispatchOrder.verify(notifications).recordDispatch(document, DocumentState.PROCESSING);
+        verifyNoMoreInteractions(rabbitTemplate, notifications);
         log.info("Extraction retry transition test completed successfully");
     }
 
@@ -193,9 +185,7 @@ class ExtractionMessageServiceTest {
 
         verify(rabbitTemplate, times(4)).send(
                 eq("test-extraction"), eq("test-extract"), any(Message.class));
-        verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PENDING_FAILURE,
-                "EXTRACTION_DISPATCH_FAILED", "Không thể gửi tài liệu sang AI trích xuất");
+        verify(notifications).recordDispatch(document, DocumentState.PENDING_FAILURE);
         verifyNoMoreInteractions(rabbitTemplate);
         assertEquals(DocumentState.UPLOADED, document.getCurrentState());
         log.info("Extraction dispatch exhaustion test completed successfully");
@@ -210,9 +200,7 @@ class ExtractionMessageServiceTest {
         extractionMessageService.sendExtract(document);
 
         verifyNoInteractions(rabbitTemplate);
-        verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PENDING_FAILURE,
-                "EXTRACTION_DISPATCH_FAILED", "Không thể gửi tài liệu sang AI trích xuất");
+        verify(notifications).recordDispatch(document, DocumentState.PENDING_FAILURE);
         log.info("Disabled extraction dispatch test completed successfully");
     }
 
@@ -225,9 +213,7 @@ class ExtractionMessageServiceTest {
         extractionMessageService.sendExtract(document);
 
         verifyNoInteractions(rabbitTemplate);
-        verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PENDING_FAILURE,
-                "EXTRACTION_DISPATCH_FAILED", "Không thể gửi tài liệu sang AI trích xuất");
+        verify(notifications).recordDispatch(document, DocumentState.PENDING_FAILURE);
         log.info("Missing extraction exchange test completed successfully");
     }
 
@@ -240,9 +226,7 @@ class ExtractionMessageServiceTest {
         extractionMessageService.sendExtract(document);
 
         verifyNoInteractions(rabbitTemplate);
-        verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PENDING_FAILURE,
-                "EXTRACTION_DISPATCH_FAILED", "Không thể gửi tài liệu sang AI trích xuất");
+        verify(notifications).recordDispatch(document, DocumentState.PENDING_FAILURE);
         log.info("Missing extraction routing key test completed successfully");
     }
 
@@ -250,16 +234,14 @@ class ExtractionMessageServiceTest {
     @Test
     void sendExtractDoesNotRepublishWhenProcessingUpdateFails() {
         log.info("Testing extraction dispatch when the processing update fails");
-        when(documentRepository.updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null))
+        when(notifications.recordDispatch(document, DocumentState.PROCESSING))
                 .thenThrow(new IllegalStateException("database unavailable"));
 
         assertDoesNotThrow(() -> extractionMessageService.sendExtract(document));
 
         verify(rabbitTemplate).send(eq("test-extraction"), eq("test-extract"), any(Message.class));
-        verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null);
-        verifyNoMoreInteractions(rabbitTemplate, documentRepository);
+        verify(notifications).recordDispatch(document, DocumentState.PROCESSING);
+        verifyNoMoreInteractions(rabbitTemplate, notifications);
         assertEquals(DocumentState.UPLOADED, document.getCurrentState());
         log.info("Failed processing update containment test completed successfully");
     }
@@ -268,15 +250,13 @@ class ExtractionMessageServiceTest {
     @Test
     void sendExtractDoesNotRepublishWhenProcessingUpdateMatchesNoDocument() {
         log.info("Testing extraction dispatch when the document state has already advanced");
-        when(documentRepository.updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null)).thenReturn(0);
+        when(notifications.recordDispatch(document, DocumentState.PROCESSING)).thenReturn(0);
 
         assertDoesNotThrow(() -> extractionMessageService.sendExtract(document));
 
         verify(rabbitTemplate).send(eq("test-extraction"), eq("test-extract"), any(Message.class));
-        verify(documentRepository).updateDispatchStateIfMatching(
-                document.getId(), DocumentState.UPLOADED, DocumentState.PROCESSING, null, null);
-        verifyNoMoreInteractions(rabbitTemplate, documentRepository);
+        verify(notifications).recordDispatch(document, DocumentState.PROCESSING);
+        verifyNoMoreInteractions(rabbitTemplate, notifications);
         log.info("Already advanced document state test completed successfully");
     }
 
@@ -288,7 +268,7 @@ class ExtractionMessageServiceTest {
         assertTrue(extractionMessageService.publishExtract(document));
 
         verify(rabbitTemplate).send(eq("test-extraction"), eq("test-extract"), any(Message.class));
-        verifyNoInteractions(documentRepository);
+        verifyNoInteractions(notifications);
         verifyNoMoreInteractions(rabbitTemplate);
         assertEquals(DocumentState.UPLOADED, document.getCurrentState());
         log.info("Publish-only extraction dispatch test completed successfully");
@@ -308,7 +288,7 @@ class ExtractionMessageServiceTest {
 
         verify(rabbitTemplate, times(4)).send(
                 eq("test-extraction"), eq("test-extract"), any(Message.class));
-        verifyNoInteractions(documentRepository);
+        verifyNoInteractions(notifications);
         verifyNoMoreInteractions(rabbitTemplate);
         log.info("Publish-only final attempt success test completed successfully");
     }
@@ -324,7 +304,7 @@ class ExtractionMessageServiceTest {
 
         verify(rabbitTemplate, times(4)).send(
                 eq("test-extraction"), eq("test-extract"), any(Message.class));
-        verifyNoInteractions(documentRepository);
+        verifyNoInteractions(notifications);
         verifyNoMoreInteractions(rabbitTemplate);
         log.info("Publish-only attempt exhaustion test completed successfully");
     }
@@ -344,7 +324,7 @@ class ExtractionMessageServiceTest {
         ReflectionTestUtils.setField(extractionMessageService, "extractRoutingKey", "   ");
         assertFalse(extractionMessageService.publishExtract(document));
 
-        verifyNoInteractions(rabbitTemplate, documentRepository);
+        verifyNoInteractions(rabbitTemplate, notifications);
         log.info("Publish-only extraction configuration failures test completed successfully");
     }
 }

@@ -33,6 +33,7 @@ import static org.mockito.Mockito.*;
 class AiExtractionResultServiceTest {
     @Mock private DocumentRepository documents;
     @Mock private DocumentStatusNotificationService statusNotifications;
+    @Mock private NotificationService notifications;
     @Mock private ExtractionResultRepository results;
     @Mock private InvoiceRepository invoices;
     @Mock private InvoiceItemRepository items;
@@ -47,7 +48,7 @@ class AiExtractionResultServiceTest {
     void setUp() {
         log.info("Preparing AI result persistence test");
         service = new AiExtractionResultService(new GsonBuilder().excludeFieldsWithoutExposeAnnotation().create(),
-                documents, statusNotifications, results, invoices, items, tasks);
+                documents, statusNotifications, notifications, results, invoices, items, tasks);
         document = DocumentEntity.builder().id(UUID.randomUUID()).currentState(DocumentState.PROCESSING).build();
     }
 
@@ -169,6 +170,7 @@ class AiExtractionResultServiceTest {
         assertEquals(AiStatus.FAILED, captor.getValue().getAiStatus());
         assertEquals("IMAGE_DOWNLOAD_FAILED", document.getErrorCode());
         assertEquals(DocumentState.EXTRACT_FAILED, document.getCurrentState());
+        verify(notifications).recordOutcome(document);
         verifyNoInteractions(invoices, items, tasks);
     }
 
@@ -179,7 +181,7 @@ class AiExtractionResultServiceTest {
         document.setCurrentState(DocumentState.EXTRACT_SUCCESS);
         when(documents.findByIdForExtractionUpdate(document.getId())).thenReturn(Optional.of(document));
         service.saveResult(successMessage(false, "126000", "2020-08-15T09:13:16"));
-        verifyNoInteractions(results, invoices, items, tasks);
+        verifyNoInteractions(results, invoices, items, tasks, notifications);
         verify(documents, never()).save(any());
     }
 
@@ -201,7 +203,7 @@ class AiExtractionResultServiceTest {
                 () -> service.saveResult(successMessage(false, "126000", "2020-08-15T09:13:16")));
         assertThrows(RuntimeException.class, () -> service.saveResult(
                 successMessage(false, "126000", "2020-08-15T09:13:16").replace(document.getId().toString(), "bad-id")));
-        verifyNoInteractions(results, invoices, items, tasks);
+        verifyNoInteractions(results, invoices, items, tasks, notifications);
     }
 
     /** Verifies Spring rolls the transaction back and propagates a database failure to the listener. */

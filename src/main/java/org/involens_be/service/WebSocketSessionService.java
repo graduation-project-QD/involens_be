@@ -88,6 +88,26 @@ public class WebSocketSessionService {
         return recipients;
     }
 
+    /** Selects only the recipient's own sessions, without granting managers access to another uploader's bell. */
+    public Set<String> ownerRecipients(Long ownerId) {
+        log.debug("Selecting private bell recipients. ownerId={}", ownerId);
+        Set<String> recipients = new HashSet<>();
+        for (String sessionId : tokens.keySet()) {
+            try {
+                Jwt token = validatedToken(sessionId);
+                Number userId = token.getClaim("userId");
+                if (userId != null && Long.valueOf(userId.longValue()).equals(ownerId)) {
+                    recipients.add(sessionId);
+                }
+            } catch (RuntimeException exception) {
+                log.warn("Closing invalid bell recipient session. sessionId={}", sessionId);
+                close(sessionId);
+            }
+        }
+        log.debug("Private bell recipients selected. ownerId={}, count={}", ownerId, recipients.size());
+        return recipients;
+    }
+
     /** Releases token and timer state when the underlying connection ends. */
     public void closed(String sessionId) {
         log.debug("Removing document WebSocket session. sessionId={}", sessionId);

@@ -141,9 +141,11 @@ Response mẫu — HTTP 200:
 {
   "status": 0,
   "error": null,
-  "data": {"id": 1, "email": "manager@example.com", "fullName": "Nguyen Van A", "role": "MANAGER"}
+  "data": {"id": 1, "email": "manager@example.com", "fullName": "Nguyen Van A", "createdAt": "2026-11-06T10:30:00"}
 }
 ```
+
+`createdAt` lấy từ `users.created_at`, giữ ngày giờ `LocalDateTime` hiện tại, không gắn thêm múi giờ. Response `/me` không còn `role`; response login, đăng ký và manager tạo tài khoản vẫn giữ `role` như trước.
 
 JWT thiếu/sai/hết hạn, đã bị thu hồi hoặc thuộc tài khoản `INACTIVE`: 401 tại security filter. Nếu tài khoản chuyển sang `INACTIVE` sau khi JWT được kiểm tra, service trả 401 `AUTH_INVALID_CREDENTIALS` với message `Account not found`.
 
@@ -913,3 +915,209 @@ samples only; failed outcomes appear when such documents exist in the database.
   }
 }
 ```
+# Thông báo chuông cho người upload
+
+Phần này mô tả module thông báo mới, độc lập với thống kê Dashboard và WebSocket trạng thái tài liệu.
+
+## Triển khai database
+
+Chạy `add_notifications.sql` trên PostgreSQL trước khi triển khai phiên bản backend này. Script tạo hai bảng và index chống hai nhóm chưa đọc cùng loại/người nhận. Không tạo thông báo từ dữ liệu lịch sử. Hibernate `ddl-auto=update` không thay thế script vì không tạo được partial unique index theo mapping hiện tại.
+
+## Quy tắc hiển thị
+
+| `type` | Nội dung FE gợi ý | Nguồn sự kiện |
+|---|---|---|
+| `SUCCESS` | `{count} hóa đơn xử lý thành công` | AI xử lý thành công hoặc người khác xác nhận hóa đơn; tự xác nhận không tạo thông báo thành công |
+| `REVIEW_REQUIRED` | `Có {count} hóa đơn chờ duyệt` | AI trả kết quả cần duyệt |
+| `FAILURE` | `{count} tài liệu tải lên/xử lý thất bại` | File bị từ chối, gửi AI thất bại, AI xử lý lỗi hoặc lần upload rollback |
+
+- Chỉ người upload nhận và đọc thông báo của mình, kể cả tài khoản manager. Không gửi cho tất cả manager.
+- Gộp vào cùng loại **chưa đọc, còn hiển thị**, không giới hạn thời gian. Một document chỉ được đếm một lần trong cùng nhóm.
+- Đọc một thông báo không xóa lịch sử. Sự kiện tiếp theo tạo nhóm chưa đọc mới nếu nhóm cũ đã đọc.
+- Duyệt làm giảm số cần duyệt trong nhóm chứa document, kể cả nhóm đã đọc. Còn 0 thì ẩn khỏi danh sách, không xóa dữ liệu lưu trữ.
+- Lịch sử lỗi/thành công không phải số trạng thái hiện tại của Dashboard. Các lỗi cũ vẫn là lịch sử sau khi retry.
+- Chỉ ghi nhận sự kiện phát sinh từ lúc triển khai, không quét/bù dữ liệu cũ.
+
+## Authentication và response
+
+Mọi request dùng header `Authorization: Bearer <accessToken>`. Không gửi `userId`/`recipientId`; backend đọc người nhận từ JWT.
+
+Response dùng envelope hiện tại: `{"status":0,"data":...}`. Các field module thông báo dùng **camelCase**. Thời gian là ISO-8601 UTC; FE định dạng theo múi giờ giao diện.
+
+## 1. Lấy danh sách dropdown
+
+```http
+GET /api/v1/notifications?page=1&page_size=8
+Authorization: Bearer <accessToken>
+```
+
+```json
+{
+  "status": 0,
+  "data": {
+    "items": [
+      {
+        "id": "10000000-0000-0000-0000-000000000001",
+        "type": "SUCCESS",
+        "count": 8,
+        "read": false,
+        "readAt": null,
+        "createdAt": "2026-11-05T08:00:00Z",
+        "updatedAt": "2026-11-05T08:01:00Z"
+      },
+      {
+        "id": "10000000-0000-0000-0000-000000000002",
+        "type": "REVIEW_REQUIRED",
+        "count": 3,
+        "read": false,
+        "readAt": null,
+        "createdAt": "2026-11-05T07:59:00Z",
+        "updatedAt": "2026-11-05T08:00:00Z"
+      }
+    ],
+    "total": 2,
+    "page": 1,
+    "pageSize": 8
+  }
+}
+```
+
+Sắp xếp `updatedAt DESC, id DESC`. `page` bắt đầu từ 1; `page_size` từ 1 đến 100, mặc định 8. Hiện chấm xanh khi `read === false`; dùng `count` để dựng nội dung. `readAt` có thể null hoặc bị serializer bỏ qua khi chưa đọc. Mở dropdown **không tự đánh dấu đã đọc**.
+
+## 2. Lấy số đỏ và tổng hóa đơn trong các thông báo chưa đọc
+
+```http
+GET /api/v1/notifications/summary
+Authorization: Bearer <accessToken>
+```
+
+```json
+{
+  "status": 0,
+  "data": {
+    "unreadCount": 2,
+    "successCount": 8,
+    "reviewRequiredCount": 3,
+    "failureCount": 0
+  }
+}
+```
+
+`unreadCount` là **số dòng thông báo chưa đọc**, dùng cho badge đỏ. Ba count còn lại là số tài liệu trong các nhóm chưa đọc tương ứng, không phải tổng toàn hệ thống. Sau khi đánh dấu tất cả đã đọc, các số này về 0; danh sách vẫn giữ các nhóm đã đọc.
+
+## 3. Bấm một thông báo
+
+```http
+PATCH /api/v1/notifications/{notificationId}/read
+Authorization: Bearer <accessToken>
+```
+
+Không cần body. Thành công HTTP 200, `{"status":0,"data":null}` (field null có thể được lược bỏ). Có thể gọi lại với thông báo đã đọc.
+
+Để hiển thị đúng các tài liệu thuộc dòng được bấm:
+
+```http
+GET /api/v1/notifications/{notificationId}/items?page=1&page_size=8
+Authorization: Bearer <accessToken>
+```
+
+```json
+{
+  "status": 0,
+  "data": {
+    "items": [
+      {
+        "id": "20000000-0000-0000-0000-000000000001",
+        "documentId": "30000000-0000-0000-0000-000000000001",
+        "filename": "invoice.jpg",
+        "errorCode": null,
+        "errorMessage": null
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 8
+  }
+}
+```
+
+Dùng `documentId` để mở API/trang chi tiết tài liệu hiện có. Với `REVIEW_REQUIRED`, danh sách chỉ gồm đóng góp còn chờ duyệt. Các nhóm thành công/lỗi là lịch sử, trạng thái hiện tại của tài liệu có thể đã khác.
+
+Khi upload rollback, item có `documentId = null`, tên file và `errorCode = UPLOAD_ROLLED_BACK`: hiển thị hướng dẫn tải lại, không gọi API chi tiết bằng ID item. Một lần upload nhiều file rollback được ghi nhận bằng các file thất bại, không tạo batch.
+
+## 4. Đánh dấu tất cả đã đọc
+
+```http
+PATCH /api/v1/notifications/read-all
+Authorization: Bearer <accessToken>
+```
+
+Không cần body. HTTP 200 khi thành công. Sau response, FE lấy lại list và summary để bỏ chấm xanh/số đỏ. Những sự kiện mới đến sau thao tác vẫn có thể tạo thông báo chưa đọc mới.
+
+## 5. Realtime và đồng bộ FE
+
+1. Kết nối STOMP native tới `/ws`, `CONNECT` có header `Authorization: Bearer <accessToken>`.
+2. Subscribe `/user/queue/notifications`, sau đó lấy list và summary qua REST để đồng bộ ban đầu.
+3. Khi nhận `{"type":"NOTIFICATIONS_CHANGED","notificationId":"..."}`, lấy lại list đang hiển thị và summary. `notificationId` có thể null/không có khi nhiều dòng thay đổi hoặc đánh dấu tất cả đã đọc; luôn đồng bộ cả danh sách và summary.
+4. WebSocket là tín hiệu tải lại, **không phải payload đầy đủ** và không phải lệnh tăng số lượng. FE không cộng `+1` khi nhận event. Khi nhiều event liên tiếp, gộp yêu cầu tải lại; nếu đang tải mà có event mới, đánh dấu cần tải thêm một lượt sau khi request hiện tại kết thúc. Tránh response cũ ghi đè response mới.
+5. Sau thao tác đọc, chủ động tải lại dù socket đang mất kết nối. Các tab khác của cùng tài khoản nhận tín hiệu để bỏ chấm xanh tương ứng.
+6. Reconnect/refresh token: subscribe lại rồi lấy REST snapshot. Không có replay sự kiện; tải lại khi mở dropdown để đồng bộ trường hợp bỏ lỡ tín hiệu.
+7. Khi dòng cần duyệt biến mất vì count về 0, thay danh sách bằng response mới. Nếu đang bấm một dòng vừa bị ẩn, API có thể trả 404; tải lại dropdown.
+
+Không dùng `/api/v1/documents/summary` để tính badge chuông. Kênh `/user/queue/document-status` vẫn phục vụ trạng thái tài liệu/Dashboard.
+
+## Lỗi và giới hạn vận hành
+
+- `400 INVALID_NOTIFICATION_REQUEST`: page/page_size ngoài giới hạn.
+- `404 NOTIFICATION_NOT_FOUND`: không tồn tại, đã ẩn hoặc thuộc người khác; không tiết lộ người sở hữu.
+- `401`: access token thiếu/không hợp lệ theo bảo mật hiện tại.
+- Các lỗi multipart/authentication bị chặn trước khi vào upload service vẫn được trả qua HTTP; không có document để tạo thông báo theo file.
+- Nếu database mất kết nối, thông báo rollback không thể lưu; backend log lỗi và giữ lỗi upload gốc.
+- WebSocket giữ giới hạn triển khai một instance như hệ thống hiện tại. Lỗi gửi không làm rollback giao dịch đã commit; REST là nguồn khôi phục.
+# Đăng ký công khai và tự đăng nhập
+
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
+```
+
+Không cần `Authorization`. FE gửi:
+
+```json
+{
+  "email": "user@example.com",
+  "fullName": "Nguyễn Văn A",
+  "password": "Example@123",
+  "confirmPassword": "Example@123"
+}
+```
+
+Tất cả field bắt buộc. Email phải hợp lệ và chưa được sử dụng (kiểm tra không phân biệt hoa/thường, bao gồm tài khoản inactive). Mật khẩu tối thiểu 8 ký tự, có chữ hoa và ký tự đặc biệt theo quy tắc hiện tại, không có khoảng trắng. `confirmPassword` phải khớp chính xác và không được lưu.
+
+Backend cố định tài khoản mới thành `EMPLOYEE`, `ACTIVE`. FE không gửi `role` hoặc `status`. Không cần xác minh email. Quyền manager quản lý toàn hệ thống và API `/api/v1/auth/create-accounts` được giữ nguyên.
+
+Thành công trả HTTP 200, cùng cấu trúc login:
+
+```json
+{
+  "status": 0,
+  "data": {
+    "accessToken": "<access-token>",
+    "expiresIn": 3600,
+    "refreshToken": "<refresh-token>",
+    "refreshExpiresIn": 604800,
+    "user": {
+      "id": 44,
+      "email": "user@example.com",
+      "fullName": "Nguyễn Văn A",
+      "role": "EMPLOYEE"
+    }
+  }
+}
+```
+
+Thời hạn token trong ví dụ phụ thuộc cấu hình; FE dùng giá trị response thực tế. FE lưu token và user theo luồng login hiện tại, chuyển vào ứng dụng, kết nối WebSocket bằng access token mới; không cần gọi login lần nữa.
+
+- HTTP 400: thông tin không hợp lệ hoặc nhập lại mật khẩu không khớp, envelope `status=1`, `error.code=VALIDATION_ERROR`.
+- HTTP 409: email đã tồn tại, cùng lỗi email trùng của API tạo tài khoản.
+- Lỗi lưu tài khoản hoặc cấp/lưu token làm rollback transaction đăng ký; không trả thành công một phần.

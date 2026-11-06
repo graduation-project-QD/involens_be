@@ -83,6 +83,20 @@ class WebSocketSecurityInterceptorTest {
         return MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
     }
 
+    /** Bell subscriptions are private even for managers, while all uploader tabs receive their own changes. */
+    @Test void bellRecipientsExcludeOtherUsersAndManagers() {
+        log.info("Testing uploader-only bell subscription and recipients");
+        Instant expiry = Instant.now().plusSeconds(300);
+        connect("owner-one", token("owner-one-token", 12L, "EMPLOYEE", expiry));
+        connect("owner-two", token("owner-two-token", 12L, "EMPLOYEE", expiry));
+        connect("manager", token("manager-token", 99L, "MANAGER", expiry));
+        assertEquals(Set.of("owner-one", "owner-two"), sessions.ownerRecipients(12L));
+        assertEquals(Set.of("manager"), sessions.ownerRecipients(99L));
+        assertDoesNotThrow(() -> security.preSend(frame(StompCommand.SUBSCRIBE, "owner-one", "/user/queue/notifications"), null));
+        assertThrows(AccessDeniedException.class, () -> security.preSend(frame(StompCommand.SUBSCRIBE, "manager", "/user/12/queue/notifications"), null));
+        assertThrows(AccessDeniedException.class, () -> security.preSend(frame(StompCommand.SEND, "owner-one", "/user/queue/notifications"), null));
+    }
+
     /** Rejects missing authentication before subscribing and missing tokens during CONNECT. */
     @Test
     void rejectsUnauthenticatedFrames() {

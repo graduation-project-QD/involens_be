@@ -157,3 +157,22 @@ Các file ngoài thư mục Java:
 - `src/test/java/org/involens_be/config/WebSocketSecurityInterceptorTest.java`: xác thực, phân quyền, hết hạn và luồng STOMP qua broker Spring.
 - `src/test/java/org/involens_be/service/DocumentStatusNotificationServiceTest.java`: commit/rollback, lọc active, snapshot và lỗi gửi.
 - Các test service tài liệu/AI: kiểm tra điểm tích hợp thông báo. `RefreshTokenServiceTest`, `AuthServiceTest`, `AuthControllerTest`: luồng refresh/logout phục vụ kết nối lại.
+# Bổ sung: kênh thông báo chuông
+
+Ngoài `/user/queue/document-status`, FE được subscribe `/user/queue/notifications` trên cùng kết nối STOMP `/ws` và JWT hiện tại.
+
+Kênh chuông chỉ gửi đến các session của **chính người upload**. Manager không nhận chuông của người khác. Không thay đổi phạm vi người nhận của kênh trạng thái tài liệu.
+
+Payload sau khi transaction thông báo commit:
+
+```json
+{"type":"NOTIFICATIONS_CHANGED","notificationId":"10000000-0000-0000-0000-000000000001"}
+```
+
+`notificationId` null/không có nếu nhiều dòng thay đổi hoặc đánh dấu tất cả đã đọc. Đây là tín hiệu FE tải lại `GET /api/v1/notifications` và `GET /api/v1/notifications/summary`, không phải dữ liệu tăng/giảm bộ đếm. Nhiều thay đổi cùng transaction/người nhận được gộp thành một tín hiệu. Các transaction AI khác nhau có thể vẫn phát nhiều tín hiệu cho cùng dòng đã gộp.
+
+Gửi sau commit, không gửi khi rollback. Thông báo chuông lưu database; WebSocket không có replay. Sau subscribe/reconnect hoặc mở dropdown, FE lấy lại REST snapshot. FE chỉ gửi thao tác đọc qua REST, không gửi STOMP `SEND`.
+
+Xem phần **Thông báo chuông cho người upload** trong `API_DOCUMENTATION.md` để biết request, response, cách gộp và đánh dấu đã đọc. Chạy `add_notifications.sql` trước khi deploy.
+
+Lưu ý cập nhật luồng dispatch: `NotificationService.recordDispatch()` hiện mở transaction `REQUIRES_NEW`, cập nhật trạng thái document và thông báo lỗi cùng nhau; repository update tham gia transaction này (`REQUIRED`). Những mô tả cũ phía trên nói repository tự mở `REQUIRES_NEW` đã được thay thế bởi luồng này.

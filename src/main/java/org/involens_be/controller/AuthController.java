@@ -13,6 +13,7 @@ import org.involens_be.dto.request.LoginRequest;
 import org.involens_be.dto.request.RefreshTokenRequest;
 import org.involens_be.dto.request.CreateUserAccountRequest;
 import org.involens_be.dto.response.AuthUserResponse;
+import org.involens_be.dto.response.CurrentUserResponse;
 import org.involens_be.dto.response.BaseResponse;
 import org.involens_be.dto.response.LoginResponse;
 import org.involens_be.config.OpenApiConfig;
@@ -38,6 +39,22 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+
+    /** Registers a public caller as an active employee and returns the first access/refresh token pair. */
+    @Operation(summary = "Register and log in", description = "Public registration. Creates an ACTIVE EMPLOYEE account and returns the login response.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Account created and login tokens issued"),
+            @ApiResponse(responseCode = "400", description = "Invalid details or password confirmation"),
+            @ApiResponse(responseCode = "409", description = "Email already exists")
+    })
+    @PostMapping("/register")
+    public BaseResponse<LoginResponse> register(
+            @Valid @RequestBody org.involens_be.dto.request.RegisterRequest request) {
+        log.info("Received public registration request. email={}", request.getEmail());
+        LoginResponse response = authService.register(request);
+        log.info("Public registration completed. email={}", request.getEmail());
+        return BaseResponse.success(response);
+    }
 
     /** Returns active account management details to a manager, including status and audit timestamps. */
     @Operation(summary = "Get account details", security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))
@@ -221,9 +238,9 @@ public class AuthController {
             @ApiResponse(responseCode = "401", description = "JWT is missing or invalid, or account does not exist")
     })
     @GetMapping("/me")
-    public BaseResponse<AuthUserResponse> me(@Parameter(hidden = true) Authentication authentication) {
+    public BaseResponse<CurrentUserResponse> me(@Parameter(hidden = true) Authentication authentication) {
         log.info("Received current-user request. subject={}", authentication.getName());
-        AuthUserResponse response = authService.getCurrentUser(authentication);
+        CurrentUserResponse response = authService.getCurrentUser(authentication);
         return BaseResponse.success(response);
     }
 

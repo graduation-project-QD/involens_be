@@ -54,7 +54,8 @@ public class WebSocketSecurityInterceptor implements ChannelInterceptor {
             } else if (command != StompCommand.DISCONNECT) {
                 sessions.validatedToken(accessor.getSessionId());
                 if (command == StompCommand.SUBSCRIBE) {
-                    if (!"/user/queue/document-status".equals(accessor.getDestination())) {
+                    if (!"/user/queue/document-status".equals(accessor.getDestination())
+                            && !"/user/queue/notifications".equals(accessor.getDestination())) {
                         throw new AccessDeniedException("Subscription destination is not permitted");
                     }
                 } else if (command != StompCommand.UNSUBSCRIBE && command != null) {

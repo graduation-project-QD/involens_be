@@ -1,12 +1,16 @@
 package org.involens_be.mapper;
 
 import org.involens_be.dto.response.AuthUserResponse;
+import org.involens_be.dto.response.CurrentUserResponse;
 import org.involens_be.dto.response.AccountListItemResponse;
 import org.involens_be.entity.UserEntity;
 import org.mapstruct.Mapper;
 
 @Mapper(componentModel = "spring")
 public interface UserMapper {
+
+    /** Maps the current user's persisted profile and creation time without exposing role or credentials. */
+    CurrentUserResponse toCurrentUserResponse(UserEntity user);
 
     /** Maps a persisted user account to the public user representation returned by authentication APIs. */
     AuthUserResponse toAuthUserResponse(UserEntity user);

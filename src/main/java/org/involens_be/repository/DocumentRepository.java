@@ -29,11 +29,11 @@ public interface DocumentRepository extends JpaRepository<DocumentEntity, UUID>,
 
     /**
      * Updates dispatch state and error details only while the document matches the expected state.
-     * Commits independently so extraction dispatch after the upload commit can persist the transition safely.
+     * Participates in the dispatch transaction so state and uploader notification commit together.
      */
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.transaction.annotation.Transactional(
-            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRED)
     @org.springframework.data.jpa.repository.Query("""
             update DocumentEntity d set d.currentState = :newState,
                 d.errorCode = :errorCode, d.errorMessage = :errorMessage

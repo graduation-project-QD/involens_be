@@ -67,6 +67,7 @@ class DocumentServiceTest {
 
     private DocumentUploadService documentUploadService;
     @Mock private DocumentStatusNotificationService statusNotifications;
+    @Mock private NotificationService notifications;
 
     /** Initializes upload collaborators and transaction callbacks without external connections. */
     @BeforeEach
@@ -74,7 +75,7 @@ class DocumentServiceTest {
         log.info("Setting up document upload service test");
         TransactionSynchronizationManager.initSynchronization();
         documentUploadService = new DocumentUploadService(documentRepository,
-                statusNotifications, minioClient,
+                statusNotifications, notifications, minioClient,
                 Mappers.getMapper(DocumentMapper.class), extractionMessageService);
         ReflectionTestUtils.setField(documentUploadService, "bucket", "test-documents");
         log.info("Document upload service test setup completed");
@@ -133,7 +134,9 @@ class DocumentServiceTest {
 
         verify(minioClient).putObject(any(PutObjectArgs.class));
         verify(minioClient).removeObject(any(RemoveObjectArgs.class));
-        assertTrue(TransactionSynchronizationManager.getSynchronizations().isEmpty());
+        assertEquals(1, TransactionSynchronizationManager.getSynchronizations().size());
+        TransactionSynchronizationManager.getSynchronizations().forEach(callback -> callback.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+        verify(notifications).recordUploadRollback(eq(12L), any());
         verifyNoInteractions(extractionMessageService);
         log.info("Document batch compensation test completed successfully");
     }
@@ -188,7 +191,7 @@ class DocumentServiceTest {
         assertEquals("DUPLICATE_FILE", response.getItems().get(1).getErrorCode());
         verify(minioClient, times(1)).putObject(any(PutObjectArgs.class));
         verifyNoInteractions(extractionMessageService);
-        assertEquals(1, TransactionSynchronizationManager.getSynchronizations().size());
+        assertEquals(2, TransactionSynchronizationManager.getSynchronizations().size());
 
         TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
 
