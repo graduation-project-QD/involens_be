@@ -12,6 +12,7 @@ import org.springframework.data.domain.PageRequest;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,6 +22,46 @@ import static org.mockito.Mockito.*;
 /** Verifies invoice list scoping, pagination and nullable failed extraction data. */
 @Slf4j
 class InvoiceServiceTest {
+    /** Combines selected suppliers with keyword, date and state filters without changing either role's scope. */
+    @Test
+    void filtersSelectedVendorsWithOtherConditions() {
+        log.info("Testing invoice supplier IDs alongside existing filters and permissions");
+        var repository = mock(InvoiceRepository.class);
+        var service = new InvoiceService(mock(DocumentThumbnailService.class), repository);
+        var request = new InvoiceListRequest();
+        request.setVendor_ids(List.of(4L, 9L));
+        request.setQ("Bill");
+        request.setCurrent_state(DocumentState.EXTRACT_SUCCESS);
+        request.setDate_from(LocalDate.of(2026, 10, 1));
+        request.setDate_to(LocalDate.of(2026, 10, 15));
+        var states = List.of(DocumentState.EXTRACT_SUCCESS);
+        var pageable = PageRequest.of(0, 8);
+        for (UserRole role : List.of(UserRole.EMPLOYEE, UserRole.MANAGER)) {
+            boolean manager = role == UserRole.MANAGER;
+            when(repository.findVisibleInvoices(states, manager, 12L, "%bill%", true, List.of(4L, 9L),
+                    request.getDate_from(), request.getDate_to(), pageable)).thenReturn(new PageImpl<>(List.of()));
+            var response = service.listInvoices(request, 12L, role);
+            assertTrue(response.getItems().isEmpty());
+            assertEquals(0, response.getTotal());
+            verify(repository).findVisibleInvoices(states, manager, 12L, "%bill%", true, List.of(4L, 9L),
+                    request.getDate_from(), request.getDate_to(), pageable);
+        }
+    }
+
+    /** Clearing supplier selections restores the unfiltered list with no empty SQL IN parameter. */
+    @Test
+    void emptyVendorListDisablesSupplierFilter() {
+        log.info("Testing cleared invoice supplier selection");
+        var repository = mock(InvoiceRepository.class);
+        var request = new InvoiceListRequest();
+        request.setVendor_ids(List.of());
+        when(repository.findVisibleInvoices(anyList(), eq(false), eq(12L), isNull(), eq(false),
+                eq(Collections.singletonList(null)), isNull(), isNull(), any())).thenReturn(new PageImpl<>(List.of()));
+        new InvoiceService(mock(DocumentThumbnailService.class), repository).listInvoices(request, 12L, UserRole.EMPLOYEE);
+        verify(repository).findVisibleInvoices(anyList(), eq(false), eq(12L), isNull(), eq(false),
+                eq(Collections.singletonList(null)), isNull(), isNull(), any());
+    }
+
     /** Returns the joined document preview URL while keeping invoice data nullable for extraction failures. */
     @Test
     void listIncludesThumbnailUrl() {
@@ -30,7 +71,7 @@ class InvoiceServiceTest {
         var row = new InvoiceRepository.InvoiceListRow(null, UUID.randomUUID(), "receipt.pdf", null,
                 null, null, null, null, null, null, DocumentState.EXTRACT_FAILED, "AI_FAILED", "Failed",
                 "documents/preview.jpg");
-        when(repository.findVisibleInvoices(any(), eq(false), eq(12L), isNull(), isNull(), isNull(), any()))
+        when(repository.findVisibleInvoices(any(), eq(false), eq(12L), isNull(), eq(false), eq(Collections.singletonList(null)), isNull(), isNull(), any()))
                 .thenReturn(new PageImpl<>(List.of(row)));
         when(thumbnails.createUrl("documents/preview.jpg")).thenReturn("https://storage.example/preview.jpg?signature=test");
         var response = new InvoiceService(thumbnails, repository).listInvoices(new InvoiceListRequest(), 12L, UserRole.EMPLOYEE);
@@ -52,10 +93,10 @@ class InvoiceServiceTest {
         request.setDate_to(to);
         var states = List.of(DocumentState.EXTRACT_SUCCESS);
         var pageable = PageRequest.of(0, 8);
-        when(repository.findVisibleInvoices(states, false, 12L, "%bill%", from, to, pageable))
+        when(repository.findVisibleInvoices(states, false, 12L, "%bill%", false, Collections.singletonList(null), from, to, pageable))
                 .thenReturn(new PageImpl<>(List.of()));
         assertTrue(new InvoiceService(org.mockito.Mockito.mock(org.involens_be.service.DocumentThumbnailService.class), repository).listInvoices(request, 12L, UserRole.EMPLOYEE).getItems().isEmpty());
-        verify(repository).findVisibleInvoices(states, false, 12L, "%bill%", from, to, pageable);
+        verify(repository).findVisibleInvoices(states, false, 12L, "%bill%", false, Collections.singletonList(null), from, to, pageable);
     }
 
     /** Combines a literal keyword search with employee ownership, state filtering and pagination. */
@@ -70,12 +111,12 @@ class InvoiceServiceTest {
         request.setPage_size(10);
         var states = List.of(DocumentState.EXTRACT_SUCCESS);
         var pageable = PageRequest.of(1, 10);
-        when(repository.findVisibleInvoices(states, false, 12L, "%bill!_50!%!!%", null, null, pageable))
+        when(repository.findVisibleInvoices(states, false, 12L, "%bill!_50!%!!%", false, Collections.singletonList(null), null, null, pageable))
                 .thenReturn(new PageImpl<>(List.of(), pageable, 0));
         var response = new InvoiceService(org.mockito.Mockito.mock(org.involens_be.service.DocumentThumbnailService.class), repository).listInvoices(request, 12L, UserRole.EMPLOYEE);
         assertEquals(0, response.getTotal());
         assertTrue(response.getItems().isEmpty());
-        verify(repository).findVisibleInvoices(states, false, 12L, "%bill!_50!%!!%", null, null, pageable);
+        verify(repository).findVisibleInvoices(states, false, 12L, "%bill!_50!%!!%", false, Collections.singletonList(null), null, null, pageable);
     }
 
     /** Ignores empty and whitespace-only keyword searches so normal invoice listing still works. */
@@ -84,14 +125,14 @@ class InvoiceServiceTest {
         log.info("Testing blank invoice keyword searches");
         var repository = mock(InvoiceRepository.class);
         var states = List.of(DocumentState.EXTRACT_SUCCESS, DocumentState.REVIEW_REQUIRED, DocumentState.EXTRACT_FAILED);
-        when(repository.findVisibleInvoices(states, true, 99L, null, null, null, PageRequest.of(0, 8)))
+        when(repository.findVisibleInvoices(states, true, 99L, null, false, Collections.singletonList(null), null, null, PageRequest.of(0, 8)))
                 .thenReturn(new PageImpl<>(List.of()));
         for (String query : List.of("", "   ", "\t")) {
             var request = new InvoiceListRequest();
             request.setQ(query);
             assertTrue(new InvoiceService(org.mockito.Mockito.mock(org.involens_be.service.DocumentThumbnailService.class), repository).listInvoices(request, 99L, UserRole.MANAGER).getItems().isEmpty());
         }
-        verify(repository, times(3)).findVisibleInvoices(states, true, 99L, null, null, null, PageRequest.of(0, 8));
+        verify(repository, times(3)).findVisibleInvoices(states, true, 99L, null, false, Collections.singletonList(null), null, null, PageRequest.of(0, 8));
     }
 
     /** Requests all three extraction outcomes globally for a manager and retains failed documents without invoice data. */
@@ -107,7 +148,7 @@ class InvoiceServiceTest {
                 null, null, null, "Manager", OffsetDateTime.parse("2026-10-15T14:00:00+07:00"),
                 DocumentState.EXTRACT_FAILED, "IMAGE_DOWNLOAD_FAILED", "MinIO unavailable", null);
         var states = List.of(DocumentState.EXTRACT_SUCCESS, DocumentState.REVIEW_REQUIRED, DocumentState.EXTRACT_FAILED);
-        when(repository.findVisibleInvoices(states, true, 99L, null, null, null, pageable))
+        when(repository.findVisibleInvoices(states, true, 99L, null, false, Collections.singletonList(null), null, null, pageable))
                 .thenReturn(new PageImpl<>(List.of(row), pageable, 9));
 
         var response = new InvoiceService(org.mockito.Mockito.mock(org.involens_be.service.DocumentThumbnailService.class), repository).listInvoices(request, 99L, UserRole.MANAGER);
@@ -123,7 +164,7 @@ class InvoiceServiceTest {
         assertEquals("IMAGE_DOWNLOAD_FAILED", item.getErrorCode());
         assertEquals("MinIO unavailable", item.getErrorMessage());
         assertEquals(OffsetDateTime.parse("2026-10-15T07:00:00Z"), item.getUploadedAt());
-        verify(repository).findVisibleInvoices(states, true, 99L, null, null, null, pageable);
+        verify(repository).findVisibleInvoices(states, true, 99L, null, false, Collections.singletonList(null), null, null, pageable);
     }
 
     /** Limits an employee query to their uploader ID and requested review state while preserving seller and amounts. */
@@ -137,7 +178,7 @@ class InvoiceServiceTest {
         var row = new InvoiceRepository.InvoiceListRow(invoiceId, UUID.randomUUID(), "review.pdf", "Seller",
                 "INV-1", LocalDate.of(2026, 10, 1), new BigDecimal("50000.00"), "VND", "Employee",
                 null, DocumentState.REVIEW_REQUIRED, null, null, null);
-        when(repository.findVisibleInvoices(List.of(DocumentState.REVIEW_REQUIRED), false, 12L, null, null, null, PageRequest.of(0, 8)))
+        when(repository.findVisibleInvoices(List.of(DocumentState.REVIEW_REQUIRED), false, 12L, null, false, Collections.singletonList(null), null, null, PageRequest.of(0, 8)))
                 .thenReturn(new PageImpl<>(List.of(row)));
 
         var response = new InvoiceService(org.mockito.Mockito.mock(org.involens_be.service.DocumentThumbnailService.class), repository).listInvoices(request, 12L, UserRole.EMPLOYEE);
@@ -150,7 +191,7 @@ class InvoiceServiceTest {
         assertEquals(new BigDecimal("50000.00"), item.getTotalAmount());
         assertEquals("VND", item.getCurrency());
         assertNull(item.getUploadedAt());
-        verify(repository).findVisibleInvoices(List.of(DocumentState.REVIEW_REQUIRED), false, 12L, null, null, null, PageRequest.of(0, 8));
+        verify(repository).findVisibleInvoices(List.of(DocumentState.REVIEW_REQUIRED), false, 12L, null, false, Collections.singletonList(null), null, null, PageRequest.of(0, 8));
     }
 
     /** Returns a successful empty page when no visible document matches the success filter. */
@@ -160,7 +201,7 @@ class InvoiceServiceTest {
         var repository = mock(InvoiceRepository.class);
         var request = new InvoiceListRequest();
         request.setCurrent_state(DocumentState.EXTRACT_SUCCESS);
-        when(repository.findVisibleInvoices(List.of(DocumentState.EXTRACT_SUCCESS), false, 12L, null, null, null, PageRequest.of(0, 8)))
+        when(repository.findVisibleInvoices(List.of(DocumentState.EXTRACT_SUCCESS), false, 12L, null, false, Collections.singletonList(null), null, null, PageRequest.of(0, 8)))
                 .thenReturn(new PageImpl<>(List.of()));
         var response = new InvoiceService(org.mockito.Mockito.mock(org.involens_be.service.DocumentThumbnailService.class), repository).listInvoices(request, 12L, UserRole.EMPLOYEE);
         assertTrue(response.getItems().isEmpty());

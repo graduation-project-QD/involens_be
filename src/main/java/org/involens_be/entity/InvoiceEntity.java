@@ -27,7 +27,7 @@ public class InvoiceEntity {
     private UUID extractionResultId;
 
     @Column(name = "vendor_id")
-    private UUID vendorId;
+    private Long vendorId;
 
     @Column(name = "seller_name")
     private String sellerName;

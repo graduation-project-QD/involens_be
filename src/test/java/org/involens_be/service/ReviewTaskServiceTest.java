@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import org.involens_be.exception.InvalidDocumentFilterException;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Collections;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -31,6 +32,41 @@ class ReviewTaskServiceTest {
     @Mock private ReviewTaskRepository reviewTasks;
     @Mock private DocumentThumbnailService thumbnails;
     private ReviewTaskService service;
+
+    /** Combines selected suppliers with search, status, dates and the unchanged role scope. */
+    @Test
+    void filtersSelectedSuppliersWithinCallerScope() {
+        log.info("Testing selected review suppliers for employees and managers");
+        var request = new ReviewTaskListRequest();
+        request.setVendor_ids(List.of(7L, 9L));
+        request.setQ(" Receipt ");
+        request.setStatus(ReviewStatus.PENDING);
+        request.setDate_from(LocalDate.parse("2026-10-01"));
+        var from = OffsetDateTime.parse("2026-10-01T00:00:00+07:00");
+        for (UserRole role : List.of(UserRole.EMPLOYEE, UserRole.MANAGER)) {
+            boolean manager = role == UserRole.MANAGER;
+            when(reviewTasks.findVisibleTasks(eq(ReviewStatus.PENDING), eq(manager), eq(12L),
+                    eq("%receipt%"), eq(true), eq(List.of(7L, 9L)), eq(from), isNull(), any()))
+                    .thenReturn(new PageImpl<>(List.of()));
+            assertTrue(service.listReviewTasks(request, 12L, role).getItems().isEmpty());
+            verify(reviewTasks).findVisibleTasks(eq(ReviewStatus.PENDING), eq(manager), eq(12L),
+                    eq("%receipt%"), eq(true), eq(List.of(7L, 9L)), eq(from), isNull(), any());
+        }
+    }
+
+    /** Treats an empty supplier selection as no supplier filter without passing an empty IN list. */
+    @Test
+    void emptySupplierSelectionKeepsUnfilteredQueue() {
+        log.info("Testing empty review supplier selection");
+        var request = new ReviewTaskListRequest();
+        request.setVendor_ids(List.of());
+        when(reviewTasks.findVisibleTasks(isNull(), eq(false), eq(12L), isNull(), eq(false),
+                eq(Collections.singletonList(null)), isNull(), isNull(), any()))
+                .thenReturn(new PageImpl<>(List.of()));
+        assertTrue(service.listReviewTasks(request, 12L, UserRole.EMPLOYEE).getItems().isEmpty());
+        verify(reviewTasks).findVisibleTasks(isNull(), eq(false), eq(12L), isNull(), eq(false),
+                eq(Collections.singletonList(null)), isNull(), isNull(), any());
+    }
 
     /** Creates an isolated review-task service with the production mapper. */
     @BeforeEach
@@ -48,7 +84,7 @@ class ReviewTaskServiceTest {
         var row = new ReviewTaskRepository.ReviewTaskRow(id, documentId, "receipt.jpg", null,
                 LocalDateTime.parse("2026-09-10T08:16:02"), "LOW_CONFIDENCE",
                 ReviewStatus.PENDING, 2, null);
-        when(reviewTasks.findVisibleTasks(eq(ReviewStatus.PENDING), eq(false), eq(12L), isNull(), isNull(), isNull(), any()))
+        when(reviewTasks.findVisibleTasks(eq(ReviewStatus.PENDING), eq(false), eq(12L), isNull(), eq(false), eq(Collections.singletonList(null)), isNull(), isNull(), any()))
                 .thenReturn(new PageImpl<>(List.of(row)));
 
         var response = service.listReviewTasks(request, 12L, UserRole.EMPLOYEE);
@@ -61,7 +97,7 @@ class ReviewTaskServiceTest {
         assertEquals(OffsetDateTime.parse("2026-09-10T08:16:02Z"),
                 response.getItems().getFirst().getCreatedAt());
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(reviewTasks).findVisibleTasks(eq(ReviewStatus.PENDING), eq(false), eq(12L), isNull(), isNull(), isNull(), pageable.capture());
+        verify(reviewTasks).findVisibleTasks(eq(ReviewStatus.PENDING), eq(false), eq(12L), isNull(), eq(false), eq(Collections.singletonList(null)), isNull(), isNull(), pageable.capture());
         assertEquals("priority: ASC,createdAt: DESC", pageable.getValue().getSort().toString().replace(", ", ","));
     }
 
@@ -71,7 +107,7 @@ class ReviewTaskServiceTest {
         log.info("Testing review list thumbnail mapping");
         var row = new ReviewTaskRepository.ReviewTaskRow(UUID.randomUUID(), UUID.randomUUID(), "receipt.pdf", null,
                 LocalDateTime.now(), "LOW_CONFIDENCE", ReviewStatus.PENDING, 1, "documents/preview.jpg");
-        when(reviewTasks.findVisibleTasks(isNull(), eq(false), eq(12L), isNull(), isNull(), isNull(), any()))
+        when(reviewTasks.findVisibleTasks(isNull(), eq(false), eq(12L), isNull(), eq(false), eq(Collections.singletonList(null)), isNull(), isNull(), any()))
                 .thenReturn(new PageImpl<>(List.of(row)));
         when(thumbnails.createUrl("documents/preview.jpg")).thenReturn("https://storage.example/preview.jpg?signature=test");
         var response = service.listReviewTasks(new ReviewTaskListRequest(), 12L, UserRole.EMPLOYEE);
@@ -114,14 +150,14 @@ class ReviewTaskServiceTest {
         var request = new ReviewTaskListRequest();
         request.setPage(2);
         request.setPage_size(10);
-        when(reviewTasks.findVisibleTasks(isNull(), eq(true), eq(99L), isNull(), isNull(), isNull(), any()))
+        when(reviewTasks.findVisibleTasks(isNull(), eq(true), eq(99L), isNull(), eq(false), eq(Collections.singletonList(null)), isNull(), isNull(), any()))
                 .thenReturn(new PageImpl<>(List.of()));
 
         var response = service.listReviewTasks(request, 99L, UserRole.MANAGER);
 
         assertEquals(2, response.getPage());
         assertEquals(10, response.getPageSize());
-        verify(reviewTasks).findVisibleTasks(isNull(), eq(true), eq(99L), isNull(), isNull(), isNull(), any());
+        verify(reviewTasks).findVisibleTasks(isNull(), eq(true), eq(99L), isNull(), eq(false), eq(Collections.singletonList(null)), isNull(), isNull(), any());
     }
 
     /** Applies literal keyword matching and an inclusive Vietnam upload day before paging owner-scoped tasks. */
@@ -134,7 +170,7 @@ class ReviewTaskServiceTest {
         var from = OffsetDateTime.parse("2026-10-01T00:00:00+07:00");
         var until = OffsetDateTime.parse("2026-10-02T00:00:00+07:00");
         when(reviewTasks.findVisibleTasks(isNull(), eq(false), eq(12L),
-                eq("%receipt!_100!%!!%"), eq(from), eq(until), any()))
+                eq("%receipt!_100!%!!%"), eq(false), eq(Collections.singletonList(null)), eq(from), eq(until), any()))
                 .thenReturn(new PageImpl<>(List.of()));
 
         var response = service.listReviewTasks(request, 12L, UserRole.EMPLOYEE);
@@ -142,7 +178,7 @@ class ReviewTaskServiceTest {
         assertEquals(0, response.getTotal());
         assertTrue(response.getItems().isEmpty());
         verify(reviewTasks).findVisibleTasks(isNull(), eq(false), eq(12L),
-                eq("%receipt!_100!%!!%"), eq(from), eq(until), any());
+                eq("%receipt!_100!%!!%"), eq(false), eq(Collections.singletonList(null)), eq(from), eq(until), any());
     }
 
     /** Ignores whitespace-only search while allowing a single lower upload-date boundary for managers. */
@@ -152,12 +188,12 @@ class ReviewTaskServiceTest {
         request.setQ("   ");
         request.setDate_from(LocalDate.parse("2026-10-01"));
         var from = OffsetDateTime.parse("2026-10-01T00:00:00+07:00");
-        when(reviewTasks.findVisibleTasks(isNull(), eq(true), eq(99L), isNull(), eq(from), isNull(), any()))
+        when(reviewTasks.findVisibleTasks(isNull(), eq(true), eq(99L), isNull(), eq(false), eq(Collections.singletonList(null)), eq(from), isNull(), any()))
                 .thenReturn(new PageImpl<>(List.of()));
 
         service.listReviewTasks(request, 99L, UserRole.MANAGER);
 
-        verify(reviewTasks).findVisibleTasks(isNull(), eq(true), eq(99L), isNull(), eq(from), isNull(), any());
+        verify(reviewTasks).findVisibleTasks(isNull(), eq(true), eq(99L), isNull(), eq(false), eq(Collections.singletonList(null)), eq(from), isNull(), any());
     }
 
     /** Rejects reversed dates and unsupported inclusive end dates before querying visible review tasks. */

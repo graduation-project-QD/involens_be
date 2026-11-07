@@ -11,6 +11,7 @@ import java.time.DateTimeException;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.Locale;
+import java.util.Collections;
 import org.involens_be.repository.ReviewTaskRepository;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -28,7 +29,7 @@ public class ReviewTaskService {
     private final ReviewTaskRepository reviewTaskRepository;
     private final ReviewTaskMapper reviewTaskMapper;
 
-    /** Searches review-required documents by filename or uploader and upload dates within the caller's scope. */
+    /** Filters review-required documents by filename, uploader, supplier IDs and upload dates within the caller's scope. */
     @Transactional(readOnly = true)
     public ReviewTaskListResponse listReviewTasks(
             ReviewTaskListRequest request, Long userId, UserRole role) {
@@ -52,8 +53,11 @@ public class ReviewTaskService {
         }
         var pageable = PageRequest.of(request.getPage() - 1, request.getPage_size(),
                 Sort.by(Sort.Order.asc("priority"), Sort.Order.desc("createdAt")));
+        boolean filterVendors = request.getVendor_ids() != null && !request.getVendor_ids().isEmpty();
+        log.debug("Applying review supplier filter. userId={}, filtered={}", userId, filterVendors);
+        var vendorIds = filterVendors ? request.getVendor_ids() : Collections.<Long>singletonList(null);
         var result = reviewTaskRepository.findVisibleTasks(request.getStatus(), manager, userId,
-                keywordPattern(request.getQ()), from, until, pageable);
+                keywordPattern(request.getQ()), filterVendors, vendorIds, from, until, pageable);
         var items = result.getContent().stream()
                 .map(row -> reviewTaskMapper.toListItemResponse(row, thumbnails.createUrl(row.thumbnailObjectKey())))
                 .toList();

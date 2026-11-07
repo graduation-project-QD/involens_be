@@ -24,9 +24,52 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 class ReviewTaskControllerTest {
+
+    /** Requires POST with a JSON body and rejects malformed JSON before list execution. */
+    @Test
+    void requiresPostWithJsonBody() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(ReviewTaskControllerTest.class).info("Testing POST list body contract");
+        mvc.perform(get("/api/v1/review-tasks")).andExpect(status().isMethodNotAllowed());
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(service);
+    }
+
+    /** Reads supplier IDs from JSON and ignores conflicting supplier query parameters. */
+    @Test
+    void bindsSupplierIds() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(ReviewTaskControllerTest.class).info("Testing review supplier ID query binding");
+        when(service.listReviewTasks(any(), eq(12L), eq(UserRole.EMPLOYEE)))
+                .thenReturn(ReviewTaskListResponse.builder().items(List.of()).total(0).page(1).pageSize(20).build());
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").content("{\"vendor_ids\":[7,9]}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").param("vendor_ids", "invalid").content("{\"vendor_ids\":[7,9]}"))
+                .andExpect(status().isOk());
+        verify(service, times(2)).listReviewTasks(
+                argThat(request -> List.of(7L, 9L).equals(request.getVendor_ids())), eq(12L), eq(UserRole.EMPLOYEE));
+    }
+
+    /** Accepts no supplier selection but rejects nonnumeric IDs before querying review tasks. */
+    @Test
+    void acceptsEmptyAndRejectsMalformedSupplierIds() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(ReviewTaskControllerTest.class).info("Testing empty and malformed review supplier IDs");
+        when(service.listReviewTasks(any(), eq(12L), eq(UserRole.EMPLOYEE)))
+                .thenReturn(ReviewTaskListResponse.builder().items(List.of()).total(0).page(1).pageSize(20).build());
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").content("{\"vendor_ids\":[]}"))
+                .andExpect(status().isOk());
+        verify(service).listReviewTasks(argThat(request -> request.getVendor_ids() == null
+                || request.getVendor_ids().isEmpty()), eq(12L), eq(UserRole.EMPLOYEE));
+        clearInvocations(service);
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").content("{\"vendor_ids\":[7,\"invalid\"]}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(1));
+        verifyNoInteractions(service);
+    }
 
     /** Serializes signed thumbnail URLs and explicit nulls for documents without previews. */
     @Test
@@ -37,7 +80,7 @@ class ReviewTaskControllerTest {
         var old = org.involens_be.dto.response.ReviewTaskListItemResponse.builder().build();
         when(service.listReviewTasks(any(), eq(12L), eq(UserRole.EMPLOYEE)))
                 .thenReturn(ReviewTaskListResponse.builder().items(List.of(preview, old)).total(2).page(1).pageSize(8).build());
-        mvc.perform(get("/api/v1/review-tasks")).andExpect(status().isOk())
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].thumbnail_url").value(url))
                 .andExpect(jsonPath("$.data.items[1].thumbnail_url").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.items[1]").value(org.hamcrest.Matchers.hasKey("thumbnail_url")));
@@ -81,9 +124,9 @@ class ReviewTaskControllerTest {
                     .page(request.getPage()).pageSize(request.getPage_size()).build();
         });
 
-        mvc.perform(get("/api/v1/review-tasks").param("status", "PENDING")
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").param("status", "PENDING")
                         .param("page", "1").param("page_size", "20")
-                        .param("q", "receipt").param("date_from", "2026-10-01").param("date_to", "2026-10-27"))
+                        .content("{\"q\":\"receipt\"}").param("date_from", "2026-10-01").param("date_to", "2026-10-27"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value(0))
                 .andExpect(jsonPath("$.data.items").isArray())
@@ -97,11 +140,11 @@ class ReviewTaskControllerTest {
     /** Rejects unsupported status values and out-of-range pagination before service execution. */
     @Test
     void invalidFiltersReturnBadRequest() throws Exception {
-        mvc.perform(get("/api/v1/review-tasks").param("status", "UNKNOWN"))
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").param("status", "UNKNOWN"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(1));
-        mvc.perform(get("/api/v1/review-tasks").param("page_size", "101"))
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").param("page_size", "101"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(1));
-        mvc.perform(get("/api/v1/review-tasks").param("date_from", "2026-02-30"))
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").param("date_from", "2026-02-30"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(1));
         verifyNoInteractions(service);
     }
@@ -112,7 +155,7 @@ class ReviewTaskControllerTest {
         when(service.listReviewTasks(any(), eq(12L), eq(UserRole.EMPLOYEE)))
                 .thenThrow(new InvalidDocumentFilterException("date_from must not be after date_to"));
 
-        mvc.perform(get("/api/v1/review-tasks").param("date_from", "2026-10-02")
+        mvc.perform(post("/api/v1/review-tasks").contentType("application/json").content("{}").param("date_from", "2026-10-02")
                         .param("date_to", "2026-10-01"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));

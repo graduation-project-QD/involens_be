@@ -8,12 +8,19 @@ import lombok.Setter;
 import org.involens_be.common.DocumentState;
 import org.springframework.format.annotation.DateTimeFormat;
 import java.time.LocalDate;
+import java.util.List;
 
 /** Filters extracted invoice outcomes using the document processing state. */
 @Getter
 @Setter
 public class InvoiceListRequest {
+    @io.swagger.v3.oas.annotations.Parameter(hidden = true)
     private String q;
+    @io.swagger.v3.oas.annotations.Parameter(hidden = true)
+    private List<Long> vendor_ids;
+
+    /** Carries text and supplier selections in the JSON body of the invoice list request. */
+    public record Filters(String q, List<Long> vendor_ids) { }
     @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
     private LocalDate date_from;
     @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)

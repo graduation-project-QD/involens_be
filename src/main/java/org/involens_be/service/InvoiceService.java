@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZoneOffset;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
@@ -24,7 +25,7 @@ public class InvoiceService {
     private final DocumentThumbnailService thumbnails;
     private final InvoiceRepository invoices;
 
-    /** Lists selected extraction states for managers globally or employees within their uploads. */
+    /** Lists extraction outcomes matching supplier IDs and other filters within the caller's visibility. */
     @Transactional(readOnly = true)
     public InvoiceListResponse listInvoices(InvoiceListRequest request, Long userId, UserRole role) {
         log.info("Listing extracted invoices. userId={}, role={}, state={}, page={}, pageSize={}",
@@ -32,7 +33,12 @@ public class InvoiceService {
         List<DocumentState> states = request.getCurrent_state() == null
                 ? List.of(DocumentState.EXTRACT_SUCCESS, DocumentState.REVIEW_REQUIRED, DocumentState.EXTRACT_FAILED)
                 : List.of(request.getCurrent_state());
+        boolean filterVendors = request.getVendor_ids() != null && !request.getVendor_ids().isEmpty();
+        List<Long> vendorIds = filterVendors ? request.getVendor_ids() : Collections.singletonList(null);
+        log.debug("Applying invoice supplier filter. userId={}, enabled={}, selectedCount={}",
+                userId, filterVendors, filterVendors ? vendorIds.size() : 0);
         var result = invoices.findVisibleInvoices(states, role == UserRole.MANAGER, userId, keywordPattern(request.getQ()),
+                filterVendors, vendorIds,
                 request.getDate_from(), request.getDate_to(), PageRequest.of(request.getPage() - 1, request.getPage_size()));
         var items = result.getContent().stream().map(this::toListItem).toList();
         log.info("Extracted invoices loaded. userId={}, total={}, returned={}", userId, result.getTotalElements(), items.size());
@@ -40,9 +46,9 @@ public class InvoiceService {
                 .page(request.getPage()).pageSize(request.getPage_size()).build();
     }
 
-    /** Prepares a literal substring for filename, uploader and supplier matching, ignoring blank keywords. */
+    /** Prepares a literal substring for filename or uploader matching, ignoring blank keywords. */
     private String keywordPattern(String query) {
-        log.debug("Preparing invoice filename, uploader and supplier search. filtered={}", query != null && !query.isBlank());
+        log.debug("Preparing invoice filename or uploader search. filtered={}", query != null && !query.isBlank());
         if (query == null || query.isBlank()) {
             return null;
         }

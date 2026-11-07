@@ -25,11 +25,24 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** Verifies the dedicated invoice HTTP contract and rejects unsupported filters before querying. */
 @Slf4j
 class InvoiceControllerTest {
+
+    /** Requires POST with a JSON body and rejects malformed JSON before list execution. */
+    @Test
+    void requiresPostWithJsonBody() throws Exception {
+        org.slf4j.LoggerFactory.getLogger(InvoiceControllerTest.class).info("Testing POST list body contract");
+        mvc.perform(get("/api/v1/invoices")).andExpect(status().isMethodNotAllowed());
+        mvc.perform(post("/api/v1/invoices").contentType("application/json"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(service);
+    }
 
     /** Serializes signed thumbnail URLs and explicit nulls for documents without previews. */
     @Test
@@ -40,7 +53,7 @@ class InvoiceControllerTest {
         var old = org.involens_be.dto.response.InvoiceListItemResponse.builder().build();
         when(service.listInvoices(any(), eq(99L), eq(UserRole.MANAGER)))
                 .thenReturn(InvoiceListResponse.builder().items(List.of(preview, old)).total(2).page(1).pageSize(8).build());
-        mvc.perform(get("/api/v1/invoices")).andExpect(status().isOk())
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].thumbnail_url").value(url))
                 .andExpect(jsonPath("$.data.items[1].thumbnail_url").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.items[1]").value(org.hamcrest.Matchers.hasKey("thumbnail_url")));
@@ -48,6 +61,48 @@ class InvoiceControllerTest {
 
     private InvoiceService service;
     private MockMvc mvc;
+
+    /** Reads supplier IDs and text from JSON even when conflicting query parameters are supplied. */
+    @Test
+    void bindsVendorIdsWithKeyword() throws Exception {
+        log.info("Testing invoice supplier ID query binding");
+        when(service.listInvoices(any(), eq(99L), eq(UserRole.MANAGER))).thenAnswer(invocation -> {
+            InvoiceListRequest request = invocation.getArgument(0);
+            assertEquals(List.of(4L, 9L), request.getVendor_ids());
+            assertEquals("Bill", request.getQ());
+            return InvoiceListResponse.builder().items(List.of()).total(0).page(1).pageSize(8).build();
+        });
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").content("{\"vendor_ids\":[4,9],\"q\":\"Bill\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty());
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("vendor_ids", "invalid").param("q", "ignored").content("{\"vendor_ids\":[4,9],\"q\":\"Bill\"}"))
+                .andExpect(status().isOk());
+        verify(service, times(2)).listInvoices(any(), eq(99L), eq(UserRole.MANAGER));
+    }
+
+    /** Allows the dropdown to clear its selections or omit the supplier parameter. */
+    @Test
+    void acceptsEmptyVendorSelection() throws Exception {
+        log.info("Testing absent and empty invoice supplier IDs");
+        when(service.listInvoices(any(), eq(99L), eq(UserRole.MANAGER))).thenAnswer(invocation -> {
+            InvoiceListRequest request = invocation.getArgument(0);
+            assertTrue(request.getVendor_ids() == null || request.getVendor_ids().isEmpty());
+            return InvoiceListResponse.builder().items(List.of()).total(0).page(1).pageSize(8).build();
+        });
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}")).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").content("{\"vendor_ids\":[]}")).andExpect(status().isOk());
+        verify(service, times(2)).listInvoices(any(), eq(99L), eq(UserRole.MANAGER));
+    }
+
+    /** Rejects supplier values that cannot be represented as Long IDs before querying invoices. */
+    @Test
+    void rejectsMalformedVendorIds() throws Exception {
+        log.info("Testing malformed invoice supplier IDs");
+        for (String value : List.of("abc", "4,abc", "9223372036854775808")) {
+            mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").content("{\"vendor_ids\":[\"" + value + "\"]}"))
+                    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        }
+        verifyNoInteractions(service);
+    }
 
     /** Binds inclusive invoice date ranges, including either open end and a single calendar day. */
     @Test
@@ -61,11 +116,11 @@ class InvoiceControllerTest {
             assertTrue(request.getDate_from() != null || request.getDate_to() != null);
             return InvoiceListResponse.builder().items(List.of()).total(0).page(1).pageSize(8).build();
         });
-        mvc.perform(get("/api/v1/invoices").param("date_from", "2026-10-15"))
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("date_from", "2026-10-15"))
                 .andExpect(status().isOk());
-        mvc.perform(get("/api/v1/invoices").param("date_to", "2026-10-15"))
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("date_to", "2026-10-15"))
                 .andExpect(status().isOk());
-        mvc.perform(get("/api/v1/invoices").param("date_from", "2026-10-15").param("date_to", "2026-10-15"))
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("date_from", "2026-10-15").param("date_to", "2026-10-15"))
                 .andExpect(status().isOk());
         verify(service, times(3)).listInvoices(any(), eq(99L), eq(UserRole.MANAGER));
     }
@@ -74,11 +129,11 @@ class InvoiceControllerTest {
     @Test
     void rejectsInvalidInvoiceDates() throws Exception {
         log.info("Testing invalid invoice date filters");
-        mvc.perform(get("/api/v1/invoices").param("date_from", "2026-10-16").param("date_to", "2026-10-15"))
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("date_from", "2026-10-16").param("date_to", "2026-10-15"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
         for (String parameter : List.of("date_from", "date_to")) {
             for (String value : List.of("not-a-date", "2026-02-30", "15/10/2026")) {
-                mvc.perform(get("/api/v1/invoices").param(parameter, value))
+                mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param(parameter, value))
                         .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
             }
         }
@@ -97,7 +152,7 @@ class InvoiceControllerTest {
             assertEquals(10, request.getPage_size());
             return InvoiceListResponse.builder().items(List.of()).total(0).page(2).pageSize(10).build();
         });
-        mvc.perform(get("/api/v1/invoices").param("q", "mock-invoice-dev-6")
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").content("{\"q\":\"mock-invoice-dev-6\"}")
                         .param("current_state", "EXTRACT_SUCCESS").param("page", "2").param("page_size", "10"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value(0))
                 .andExpect(jsonPath("$.data.items").isEmpty()).andExpect(jsonPath("$.data.total").value(0));
@@ -137,7 +192,7 @@ class InvoiceControllerTest {
                     .page(request.getPage()).pageSize(request.getPage_size()).build();
         });
         for (String state : List.of("EXTRACT_SUCCESS", "REVIEW_REQUIRED", "EXTRACT_FAILED")) {
-            mvc.perform(get("/api/v1/invoices").param("current_state", state).param("page", "2").param("page_size", "10"))
+            mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("current_state", state).param("page", "2").param("page_size", "10"))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.status").value(0))
                     .andExpect(jsonPath("$.data.items[0].document_id").value(documentId.toString()))
                     .andExpect(jsonPath("$.data.items[0].seller_name").value("Seller"))
@@ -159,7 +214,7 @@ class InvoiceControllerTest {
                     .currentState(DocumentState.EXTRACT_FAILED).errorCode("IMAGE_DOWNLOAD_FAILED").build();
             return InvoiceListResponse.builder().items(List.of(item)).total(1).page(1).pageSize(8).build();
         });
-        mvc.perform(get("/api/v1/invoices")).andExpect(status().isOk())
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0]").value(org.hamcrest.Matchers.hasKey("id")))
                 .andExpect(jsonPath("$.data.items[0].id").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.items[0].seller_name").value(org.hamcrest.Matchers.nullValue()))
@@ -171,13 +226,13 @@ class InvoiceControllerTest {
     void rejectsInvalidFilters() throws Exception {
         log.info("Testing invalid invoice outcome filters");
         for (String state : List.of("UNKNOWN", "UPLOADED", "PROCESSING", "PENDING_FAILURE", "UPLOADED_FAILED")) {
-            mvc.perform(get("/api/v1/invoices").param("current_state", state))
+            mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("current_state", state))
                     .andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(1));
         }
         for (String size : List.of("0", "101", "abc")) {
-            mvc.perform(get("/api/v1/invoices").param("page_size", size)).andExpect(status().isBadRequest());
+            mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("page_size", size)).andExpect(status().isBadRequest());
         }
-        mvc.perform(get("/api/v1/invoices").param("page", "0")).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/invoices").contentType("application/json").content("{}").param("page", "0")).andExpect(status().isBadRequest());
         verifyNoInteractions(service);
     }
 }
