@@ -343,7 +343,7 @@ class DocumentQueryServiceTest {
                 Mappers.getMapper(DocumentMapper.class), extractionResults,
                 mock(org.involens_be.repository.InvoiceRepository.class),
                 mock(org.involens_be.repository.ReviewTaskRepository.class),
-                mock(org.involens_be.repository.InvoiceItemRepository.class));
+                mock(org.involens_be.repository.InvoiceItemRepository.class), mock(VendorService.class));
         log.info("Document query test setup completed");
     }
 

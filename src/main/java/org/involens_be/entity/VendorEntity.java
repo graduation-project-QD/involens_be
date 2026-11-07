@@ -23,9 +23,6 @@ public class VendorEntity {
     @Column(name = "tax_code")
     private String taxCode;
 
-    @Column(columnDefinition = "text")
-    private String address;
-
     @Column(nullable = false)
     private String status;
 }

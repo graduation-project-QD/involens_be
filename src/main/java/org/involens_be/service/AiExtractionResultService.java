@@ -39,6 +39,7 @@ public class AiExtractionResultService {
     private final InvoiceRepository invoiceRepository;
     private final InvoiceItemRepository invoiceItemRepository;
     private final ReviewTaskRepository reviewTaskRepository;
+    private final VendorService vendors;
 
     /** Saves one outcome atomically; invalid envelopes and database failures propagate to queue retry. */
     @Transactional
@@ -156,6 +157,7 @@ public class AiExtractionResultService {
         }
         ExtractionResultEntity savedResult = extractionResultRepository.save(result);
         invoice.setExtractionResultId(savedResult.getId());
+        invoice.setVendorId(vendors.resolveVendorId(invoice.getSellerName(), invoice.getTaxCode()));
         InvoiceEntity savedInvoice = invoiceRepository.save(invoice);
         invoiceItemRepository.deleteAllByInvoiceId(savedInvoice.getId());
         for (InvoiceItemEntity item : items) {

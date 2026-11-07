@@ -71,6 +71,7 @@ public class DocumentService {
     private final InvoiceRepository invoiceRepository;
     private final ReviewTaskRepository reviewTaskRepository;
     private final InvoiceItemRepository invoiceItemRepository;
+    private final VendorService vendors;
     private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     @Value("${app.minio.bucket}")
@@ -230,6 +231,7 @@ public class DocumentService {
         LocalDateTime completedAt = LocalDateTime.now(Clock.systemUTC());
         invoice.setApprovedById(reviewerId);
         invoice.setApprovedAt(completedAt);
+        invoice.setVendorId(vendors.resolveVendorId(invoice.getSellerName(), invoice.getTaxCode()));
         InvoiceEntity savedInvoice = saveReviewedInvoice(invoice);
         extractionResult.setAiStatus(AiStatus.SUCCESS);
         extractionResult.setHumanReviewRequired(false);

@@ -3,7 +3,9 @@ package org.involens_be.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.involens_be.common.DocumentState;
+import org.involens_be.common.CommonStatus;
 import org.involens_be.dto.response.VendorListItemResponse;
+import org.involens_be.entity.VendorEntity;
 import org.involens_be.repository.VendorRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,12 +13,41 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Locale;
 
-/** Supplies invoice filter options scoped to the authenticated uploader. */
+/** Resolves invoice suppliers by name and supplies filter options scoped to the authenticated uploader. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class VendorService {
     private final VendorRepository vendors;
+
+    /** Reuses a supplier by seller name or creates an active one without an address in the invoice transaction. */
+    @Transactional
+    public Long resolveVendorId(String sellerName, String taxCode) {
+        log.debug("Resolving invoice supplier. hasSellerName={}", sellerName != null && !sellerName.isBlank());
+        if (sellerName == null || sellerName.isBlank()) {
+            log.info("Skipping supplier creation because the invoice has no seller name");
+            return null;
+        }
+        try {
+            var existing = vendors.findByNormalizedName(sellerName.trim());
+            if (existing.isPresent()) {
+                Long vendorId = existing.get().getId();
+                log.debug("Reusing invoice supplier. vendorId={}", vendorId);
+                return vendorId;
+            }
+            VendorEntity vendor = VendorEntity.builder()
+                    .name(sellerName.trim())
+                    .taxCode(taxCode)
+                    .status(CommonStatus.ACTIVE.name())
+                    .build();
+            VendorEntity saved = vendors.save(vendor);
+            log.info("Created invoice supplier. vendorId={}", saved.getId());
+            return saved.getId();
+        } catch (RuntimeException exception) {
+            log.error("Failed to resolve invoice supplier", exception);
+            throw exception;
+        }
+    }
 
     /** Finds active suppliers of the caller's eligible uploads, optionally matching their names. */
     @Transactional(readOnly = true)

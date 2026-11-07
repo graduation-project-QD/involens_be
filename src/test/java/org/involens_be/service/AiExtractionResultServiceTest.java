@@ -38,6 +38,7 @@ class AiExtractionResultServiceTest {
     @Mock private InvoiceRepository invoices;
     @Mock private InvoiceItemRepository items;
     @Mock private ReviewTaskRepository tasks;
+    @Mock private VendorService vendors;
     private AiExtractionResultService service;
     private DocumentEntity document;
     private static final UUID RESULT_ID = UUID.fromString("12345678-1234-1234-1234-123456789012");
@@ -48,7 +49,7 @@ class AiExtractionResultServiceTest {
     void setUp() {
         log.info("Preparing AI result persistence test");
         service = new AiExtractionResultService(new GsonBuilder().excludeFieldsWithoutExposeAnnotation().create(),
-                documents, statusNotifications, notifications, results, invoices, items, tasks);
+                documents, statusNotifications, notifications, results, invoices, items, tasks, vendors);
         document = DocumentEntity.builder().id(UUID.randomUUID()).currentState(DocumentState.PROCESSING).build();
     }
 
@@ -95,9 +96,11 @@ class AiExtractionResultServiceTest {
     void savesSuccessAndOriginalMessage() {
         log.info("Testing AI success and raw preservation");
         prepareSuccessPersistence();
+        when(vendors.resolveVendorId("Seller", null)).thenReturn(7L);
         service.saveResult(successMessage(false, "126000", "2020-08-15T09:13:16"));
         var invoiceCaptor = ArgumentCaptor.forClass(InvoiceEntity.class);
         verify(invoices).save(invoiceCaptor.capture());
+        assertEquals(7L, invoiceCaptor.getValue().getVendorId());
         assertEquals(LocalDate.of(2020, 8, 15), invoiceCaptor.getValue().getInvoiceDate());
         assertEquals(new BigDecimal("126000.00"), invoiceCaptor.getValue().getTotalAmount());
         assertNull(invoiceCaptor.getValue().getSellerAddress());

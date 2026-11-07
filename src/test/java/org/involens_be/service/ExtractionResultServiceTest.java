@@ -51,7 +51,29 @@ class ExtractionResultServiceTest {
     @Mock private InvoiceRepository invoices;
     @Mock private ReviewTaskRepository reviewTasks;
     @Mock private org.involens_be.repository.InvoiceItemRepository invoiceItems;
+    @Mock private VendorService vendors;
     private DocumentService service;
+
+    /** Relinks a corrected seller to its resolved supplier before saving the reviewed invoice. */
+    @Test
+    void linksCorrectedSellerToSupplier() {
+        org.slf4j.LoggerFactory.getLogger(getClass()).info("Testing supplier linkage after seller correction");
+        UUID documentId = UUID.randomUUID();
+        InvoiceEntity invoice = prepareVersionedInvoice(documentId);
+        invoice.setVendorId(3L);
+        var request = new UpdateInvoiceExtractionRequest();
+        request.setVersion(2L);
+        request.setSellerName("Corrected seller");
+        when(vendors.resolveVendorId("Corrected seller", null)).thenReturn(7L);
+        when(invoices.saveAndFlush(invoice)).thenReturn(invoice);
+
+        service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE);
+
+        assertEquals(7L, invoice.getVendorId());
+        var order = inOrder(vendors, invoices);
+        order.verify(vendors).resolveVendorId("Corrected seller", null);
+        order.verify(invoices).saveAndFlush(invoice);
+    }
 
     /** Rejects stale and invalid client versions before invoice fields or review state are changed. */
     @Test
@@ -121,7 +143,7 @@ class ExtractionResultServiceTest {
         service = new DocumentService(org.mockito.Mockito.mock(org.involens_be.service.DocumentThumbnailService.class), documents,
                 statusNotifications, notifications,
                 mock(UserRepository.class), Mappers.getMapper(DocumentMapper.class), extractionResults,
-                invoices, reviewTasks, invoiceItems);
+                invoices, reviewTasks, invoiceItems, vendors);
         org.slf4j.LoggerFactory.getLogger(getClass()).info("Extraction-result service test setup completed");
     }
 
@@ -215,8 +237,10 @@ class ExtractionResultServiceTest {
         });
         UpdateInvoiceExtractionRequest request = new ObjectMapper().readValue(
                 "{\"version\":0}", UpdateInvoiceExtractionRequest.class);
+        when(vendors.resolveVendorId("AI Seller", null)).thenReturn(7L);
 
         var response = service.updateExtractionResult(documentId, request, 12L, UserRole.EMPLOYEE);
+        assertEquals(7L, invoice.getVendorId());
         verify(statusNotifications).afterCommit(document, DocumentState.REVIEW_REQUIRED);
         verify(notifications).recordApproval(document, DocumentState.REVIEW_REQUIRED, 12L);
 

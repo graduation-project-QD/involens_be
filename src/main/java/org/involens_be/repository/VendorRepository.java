@@ -8,8 +8,13 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface VendorRepository extends JpaRepository<VendorEntity, Long> {
+    /** Finds the supplier shared by invoices whose seller names differ only in case or surrounding spaces. */
+    @Query("select v from VendorEntity v where lower(trim(v.name)) = lower(trim(:name))")
+    Optional<VendorEntity> findByNormalizedName(@Param("name") String name);
+
     /** Lists each active supplier once when an eligible invoice belongs to the uploader. */
     @Query("""
             select new org.involens_be.dto.response.VendorListItemResponse(v.id, v.name)
