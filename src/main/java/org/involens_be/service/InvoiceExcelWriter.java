@@ -20,8 +20,8 @@ import java.util.function.IntFunction;
 public class InvoiceExcelWriter {
 
     private static final String[] HEADERS = {
-            "STT", "Số hóa đơn", "Ngày hóa đơn", "Nhà cung cấp", "Mã số thuế",
-            "Địa chỉ nhà cung cấp", "Tổng tiền", "Loại tiền", "Trạng thái", "Ngày duyệt"
+            "STT", "Ngày hóa đơn", "Nhà cung cấp", "Địa chỉ nhà cung cấp",
+            "Tổng tiền", "Trạng thái"
     };
 
     /** Creates the invoice-only workbook from bounded database batches, splitting full Excel sheets. */
@@ -36,8 +36,6 @@ public class InvoiceExcelWriter {
             headerStyle.setFont(headerFont);
             CellStyle dateStyle = workbook.createCellStyle();
             dateStyle.setDataFormat(workbook.createDataFormat().getFormat("dd/mm/yyyy"));
-            CellStyle timestampStyle = workbook.createCellStyle();
-            timestampStyle.setDataFormat(workbook.createDataFormat().getFormat("dd/mm/yyyy hh:mm:ss"));
             CellStyle amountStyle = workbook.createCellStyle();
             amountStyle.setDataFormat(workbook.createDataFormat().getFormat("#,##0.00"));
             Sheet sheet = null;
@@ -55,7 +53,7 @@ public class InvoiceExcelWriter {
                         rowIndex = 1;
                     }
                     writeInvoice(sheet.createRow(rowIndex++), invoice, ++count,
-                            dateStyle, timestampStyle, amountStyle);
+                            dateStyle, amountStyle);
                 }
                 log.debug("Invoice export batch written. batch={}, totalRows={}", batchIndex, count);
             }
@@ -78,39 +76,31 @@ public class InvoiceExcelWriter {
             Cell cell = header.createCell(column);
             cell.setCellValue(HEADERS[column]);
             cell.setCellStyle(headerStyle);
-            sheet.setColumnWidth(column, (column == 3 || column == 5 ? 40 : 22) * 256);
+            sheet.setColumnWidth(column, (column == 2 || column == 3 ? 40 : 22) * 256);
         }
         sheet.createFreezePane(0, 1);
         log.debug("Created invoice worksheet. name={}", sheet.getSheetName());
         return sheet;
     }
 
-    /** Writes accounting values, keeping identifiers as text and amounts and dates as Excel values. */
+    /** Writes invoice summaries, keeping supplier details as text and amounts and dates as Excel values. */
     private void writeInvoice(Row row, InvoiceExportRow source, long ordinal,
-                              CellStyle dateStyle, CellStyle timestampStyle, CellStyle amountStyle) {
+                              CellStyle dateStyle, CellStyle amountStyle) {
         var invoice = source;
         row.createCell(0).setCellValue(ordinal);
-        row.createCell(1).setCellValue(invoice.invoiceNumber());
-        Cell date = row.createCell(2);
+        Cell date = row.createCell(1);
         if (invoice.invoiceDate() != null) {
             date.setCellValue(invoice.invoiceDate());
             date.setCellStyle(dateStyle);
         }
-        row.createCell(3).setCellValue(invoice.sellerName());
-        row.createCell(4).setCellValue(invoice.taxCode());
-        row.createCell(5).setCellValue(invoice.sellerAddress());
-        Cell amount = row.createCell(6);
+        row.createCell(2).setCellValue(invoice.sellerName());
+        row.createCell(3).setCellValue(invoice.sellerAddress());
+        Cell amount = row.createCell(4);
         if (invoice.totalAmount() != null) {
             amount.setCellValue(invoice.totalAmount().doubleValue());
             amount.setCellStyle(amountStyle);
         }
-        row.createCell(7).setCellValue(invoice.currency());
-        row.createCell(8).setCellValue(source.state() == DocumentState.EXTRACT_SUCCESS ? "Đã duyệt" : "Chờ duyệt");
-        Cell approvedAt = row.createCell(9);
-        if (invoice.approvedAt() != null) {
-            approvedAt.setCellValue(invoice.approvedAt());
-            approvedAt.setCellStyle(timestampStyle);
-        }
+        row.createCell(5).setCellValue(source.state() == DocumentState.EXTRACT_SUCCESS ? "Đã duyệt" : "Chờ duyệt");
         log.trace("Invoice written to accounting workbook. invoiceId={}, ordinal={}", invoice.id(), ordinal);
     }
 }

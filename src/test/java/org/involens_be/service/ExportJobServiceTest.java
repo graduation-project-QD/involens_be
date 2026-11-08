@@ -40,6 +40,7 @@ class ExportJobServiceTest {
     @Test
     void excelExportsAllBatchesWithTypedAccountingValues() throws Exception {
         var request = new ExportPreviewRequest();
+        request.setVendorIds(List.of(1L, 2L));
         request.setDateFrom("2026-09-01");
         request.setDateTo("2026-09-30");
         request.setStatus(ExportPreviewRequest.Status.APPROVED);
@@ -48,26 +49,30 @@ class ExportJobServiceTest {
                 new BigDecimal("1234567.89"), "VND", DocumentState.EXTRACT_SUCCESS,
                 LocalDateTime.of(2026, 9, 16, 10, 30));
         when(exportJobs.findExportBatch(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30),
-                true, false, false, 12L, PageRequest.of(0, 1000))).thenReturn(List.of(row));
+                true, false, false, true, List.of(1L, 2L), 12L, PageRequest.of(0, 1000))).thenReturn(List.of(row));
         when(exportJobs.findExportBatch(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30),
-                true, false, false, 12L, PageRequest.of(1, 1000))).thenReturn(List.of(row));
+                true, false, false, true, List.of(1L, 2L), 12L, PageRequest.of(1, 1000))).thenReturn(List.of(row));
         when(exportJobs.findExportBatch(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30),
-                true, false, false, 12L, PageRequest.of(2, 1000))).thenReturn(List.of());
+                true, false, false, true, List.of(1L, 2L), 12L, PageRequest.of(2, 1000))).thenReturn(List.of());
 
         try (var workbook = new XSSFWorkbook(new ByteArrayInputStream(service.exportExcel(request, 12L, UserRole.EMPLOYEE)))) {
             assertEquals(1, workbook.getNumberOfSheets());
             var sheet = workbook.getSheet("Hóa đơn");
             assertEquals(2, sheet.getLastRowNum());
-            assertEquals(10, sheet.getRow(0).getLastCellNum());
-            assertEquals("Số hóa đơn", sheet.getRow(0).getCell(1).getStringCellValue());
+            assertEquals(6, sheet.getRow(0).getLastCellNum());
+            String[] expectedHeaders = {"STT", "Ngày hóa đơn", "Nhà cung cấp",
+                    "Địa chỉ nhà cung cấp", "Tổng tiền", "Trạng thái"};
+            for (int column = 0; column < expectedHeaders.length; column++) {
+                assertEquals(expectedHeaders[column], sheet.getRow(0).getCell(column).getStringCellValue());
+            }
             var first = sheet.getRow(1);
-            assertEquals("000123", first.getCell(1).getStringCellValue());
-            assertEquals("0012345678", first.getCell(4).getStringCellValue());
-            assertEquals(CellType.NUMERIC, first.getCell(2).getCellType());
-            assertEquals(row.invoiceDate(), first.getCell(2).getLocalDateTimeCellValue().toLocalDate());
-            assertEquals(1234567.89, first.getCell(6).getNumericCellValue(), 0.001);
-            assertEquals("Đã duyệt", first.getCell(8).getStringCellValue());
-            assertEquals(row.approvedAt(), first.getCell(9).getLocalDateTimeCellValue());
+            assertEquals("Nhà cung cấp", first.getCell(2).getStringCellValue());
+            assertEquals("Hà Nội", first.getCell(3).getStringCellValue());
+            assertEquals(CellType.NUMERIC, first.getCell(1).getCellType());
+            assertEquals(row.invoiceDate(), first.getCell(1).getLocalDateTimeCellValue().toLocalDate());
+            assertEquals(1234567.89, first.getCell(4).getNumericCellValue(), 0.001);
+            assertEquals("Đã duyệt", first.getCell(5).getStringCellValue());
+            assertNull(first.getCell(6));
             assertEquals(2, sheet.getRow(2).getCell(0).getNumericCellValue());
         }
     }
@@ -78,26 +83,26 @@ class ExportJobServiceTest {
         var request = new ExportPreviewRequest();
         request.setStatus(ExportPreviewRequest.Status.PENDING_REVIEW);
         var row = new ExportJobRepository.InvoiceExportRow(UUID.randomUUID(), "=1+1",
-                LocalDate.of(2026, 9, 15), "Seller", null, null, BigDecimal.TEN,
+                LocalDate.of(2026, 9, 15), "=1+1", null, null, BigDecimal.TEN,
                 "USD", DocumentState.REVIEW_REQUIRED, null);
-        when(exportJobs.findExportBatch(null, null, false, true, true, 9L, PageRequest.of(0, 1000)))
+        when(exportJobs.findExportBatch(null, null, false, true, true, false, java.util.Collections.singletonList(null), 9L, PageRequest.of(0, 1000)))
                 .thenReturn(List.of(row));
-        when(exportJobs.findExportBatch(null, null, false, true, true, 9L, PageRequest.of(1, 1000)))
+        when(exportJobs.findExportBatch(null, null, false, true, true, false, java.util.Collections.singletonList(null), 9L, PageRequest.of(1, 1000)))
                 .thenReturn(List.of());
         try (var workbook = new XSSFWorkbook(new ByteArrayInputStream(service.exportExcel(request, 9L, UserRole.MANAGER)))) {
             var cells = workbook.getSheetAt(0).getRow(1);
-            assertEquals(CellType.STRING, cells.getCell(1).getCellType());
-            assertEquals("=1+1", cells.getCell(1).getStringCellValue());
-            assertEquals(CellType.BLANK, cells.getCell(4).getCellType());
-            assertEquals("Chờ duyệt", cells.getCell(8).getStringCellValue());
-            assertEquals(CellType.BLANK, cells.getCell(9).getCellType());
+            assertEquals(CellType.STRING, cells.getCell(2).getCellType());
+            assertEquals("=1+1", cells.getCell(2).getStringCellValue());
+            assertEquals(CellType.BLANK, cells.getCell(3).getCellType());
+            assertEquals("Chờ duyệt", cells.getCell(5).getStringCellValue());
+            assertNull(cells.getCell(6));
         }
     }
 
     /** Returns the empty-selection business error instead of producing a header-only workbook. */
     @Test
     void emptyExcelSelectionIsRejected() {
-        when(exportJobs.findExportBatch(null, null, false, false, false, 12L, PageRequest.of(0, 1000)))
+        when(exportJobs.findExportBatch(null, null, false, false, false, false, java.util.Collections.singletonList(null), 12L, PageRequest.of(0, 1000)))
                 .thenReturn(List.of());
         assertThrows(NoInvoicesToExportException.class,
                 () -> service.exportExcel(new ExportPreviewRequest(), 12L, UserRole.EMPLOYEE));
@@ -123,7 +128,7 @@ class ExportJobServiceTest {
         var writer = mock(InvoiceExcelWriter.class);
         var failure = new IOException("disk failure");
         when(writer.write(any())).thenThrow(failure);
-        service = new ExportJobService(exportJobs, writer);
+        service = new ExportJobService(exportJobs, writer, new InvoiceCsvWriter());
         var exception = assertThrows(InvoiceExportException.class,
                 () -> service.exportExcel(new ExportPreviewRequest(), 12L, UserRole.EMPLOYEE));
         assertSame(failure, exception.getCause());
@@ -132,7 +137,83 @@ class ExportJobServiceTest {
     /** Creates an isolated export-preview service for each business-rule test. */
     @BeforeEach
     void setUp() {
-        service = new ExportJobService(exportJobs, new InvoiceExcelWriter());
+        service = new ExportJobService(exportJobs, new InvoiceExcelWriter(), new InvoiceCsvWriter());
+    }
+
+    /** Preserves Vietnamese supplier text and CSV delimiters across all employee-selected batches. */
+    @Test
+    void csvExportsAllBatchesWithEscapedValues() {
+        var request = new ExportPreviewRequest();
+        request.setVendorIds(List.of(1L, 2L));
+        request.setDateFrom("2026-09-01");
+        request.setDateTo("2026-09-30");
+        request.setStatus(ExportPreviewRequest.Status.APPROVED);
+        var row = new ExportJobRepository.InvoiceExportRow(UUID.randomUUID(), "omit-number",
+                LocalDate.of(2026, 9, 15), "Công ty \"A\", B", "omit-tax", "Hà Nội\r\nViệt Nam",
+                new BigDecimal("1234567.89"), "VND", DocumentState.EXTRACT_SUCCESS, LocalDateTime.now());
+        when(exportJobs.findExportBatch(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30),
+                true, false, false, true, List.of(1L, 2L), 12L, PageRequest.of(0, 1000))).thenReturn(List.of(row));
+        when(exportJobs.findExportBatch(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30),
+                true, false, false, true, List.of(1L, 2L), 12L, PageRequest.of(1, 1000))).thenReturn(List.of(row));
+        when(exportJobs.findExportBatch(LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30),
+                true, false, false, true, List.of(1L, 2L), 12L, PageRequest.of(2, 1000))).thenReturn(List.of());
+        String csv = new String(service.exportCsv(request, 12L, UserRole.EMPLOYEE),
+                java.nio.charset.StandardCharsets.UTF_8);
+        String values = ",\"15/09/2026\",\"Công ty \"\"A\"\", B\",\"Hà Nội\r\nViệt Nam\",\"1234567.89\",\"Đã duyệt\"\r\n";
+        assertEquals("\uFEFFSTT,Ngày hóa đơn,Nhà cung cấp,Địa chỉ nhà cung cấp,Tổng tiền,Trạng thái\r\n"
+                + "\"1\"" + values + "\"2\"" + values, csv);
+    }
+
+    /** Exports manager-visible pending invoices without inventing values for missing fields. */
+    @Test
+    void csvManagerPendingExportPreservesBlanks() {
+        var request = new ExportPreviewRequest();
+        request.setStatus(ExportPreviewRequest.Status.PENDING_REVIEW);
+        var row = new ExportJobRepository.InvoiceExportRow(UUID.randomUUID(), null, null, null,
+                null, null, null, "VND", DocumentState.REVIEW_REQUIRED, null);
+        when(exportJobs.findExportBatch(null, null, false, true, true, false, java.util.Collections.singletonList(null), 9L, PageRequest.of(0, 1000)))
+                .thenReturn(List.of(row));
+        when(exportJobs.findExportBatch(null, null, false, true, true, false, java.util.Collections.singletonList(null), 9L, PageRequest.of(1, 1000)))
+                .thenReturn(List.of());
+        String csv = new String(service.exportCsv(request, 9L, UserRole.MANAGER),
+                java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(csv.endsWith("\"1\",\"\",,,\"\",\"Chờ duyệt\"\r\n"));
+    }
+
+    /** Rejects empty CSV selections using the shared invoice-selection error. */
+    @Test
+    void csvEmptySelectionIsRejected() {
+        when(exportJobs.findExportBatch(null, null, false, false, false, false, java.util.Collections.singletonList(null), 12L, PageRequest.of(0, 1000)))
+                .thenReturn(List.of());
+        assertThrows(NoInvoicesToExportException.class,
+                () -> service.exportCsv(new ExportPreviewRequest(), 12L, UserRole.EMPLOYEE));
+    }
+
+    /** Rejects malformed or reversed CSV dates before accessing invoice data. */
+    @Test
+    void csvRejectsInvalidDates() {
+        var request = new ExportPreviewRequest();
+        request.setDateFrom("bad-date");
+        assertThrows(InvalidExportPreviewFilterException.class,
+                () -> service.exportCsv(request, 12L, UserRole.EMPLOYEE));
+        request.setDateFrom("2026-09-30");
+        request.setDateTo("2026-09-01");
+        assertThrows(InvalidExportPreviewFilterException.class,
+                () -> service.exportCsv(request, 12L, UserRole.EMPLOYEE));
+        verifyNoInteractions(exportJobs);
+    }
+
+    /** Preserves CSV generation failures and identifies the failed download format. */
+    @Test
+    void csvCreationFailureIsWrapped() throws Exception {
+        var writer = mock(InvoiceCsvWriter.class);
+        var failure = new IOException("write failure");
+        when(writer.write(any())).thenThrow(failure);
+        service = new ExportJobService(exportJobs, new InvoiceExcelWriter(), writer);
+        var exception = assertThrows(InvoiceExportException.class,
+                () -> service.exportCsv(new ExportPreviewRequest(), 12L, UserRole.EMPLOYEE));
+        assertSame(failure, exception.getCause());
+        assertEquals("Xuất file CSV thất bại. Vui lòng thử lại.", exception.getMessage());
     }
 
     /** Returns document-state aggregates for a manager requesting all exportable invoices. */
@@ -142,7 +223,7 @@ class ExportJobServiceTest {
         request.setDateFrom("2026-09-01");
         request.setDateTo("2026-09-30");
         when(exportJobs.countPreview(LocalDate.parse(request.getDateFrom()), LocalDate.parse(request.getDateTo()),
-                false, false, true, 9L))
+                false, false, true, false, java.util.Collections.singletonList(null), 9L))
                 .thenReturn(new ExportJobRepository.PreviewCounts(245L, 198L, 47L));
 
         var result = service.preview(request, 9L, UserRole.MANAGER);
@@ -156,6 +237,7 @@ class ExportJobServiceTest {
     @Test
     void previewReturnsAllSelectedInvoicesInExcelOrder() throws Exception {
         var request = new ExportPreviewRequest();
+        request.setVendorIds(List.of(1L, 2L));
         request.setDateFrom("2026-09-01");
         request.setDateTo("2026-09-30");
         var rows = new java.util.ArrayList<ExportJobRepository.InvoiceExportRow>();
@@ -167,13 +249,13 @@ class ExportJobServiceTest {
         }
         var from = LocalDate.of(2026, 9, 1);
         var to = LocalDate.of(2026, 9, 30);
-        when(exportJobs.countPreview(from, to, false, false, true, 9L))
+        when(exportJobs.countPreview(from, to, false, false, true, true, List.of(1L, 2L), 9L))
                 .thenReturn(new ExportJobRepository.PreviewCounts(6L, 3L, 3L));
-        when(exportJobs.findExportBatch(from, to, false, false, true, 9L, Pageable.unpaged()))
+        when(exportJobs.findExportBatch(from, to, false, false, true, true, List.of(1L, 2L), 9L, Pageable.unpaged()))
                 .thenReturn(rows);
-        when(exportJobs.findExportBatch(from, to, false, false, true, 9L, PageRequest.of(0, 1000)))
+        when(exportJobs.findExportBatch(from, to, false, false, true, true, List.of(1L, 2L), 9L, PageRequest.of(0, 1000)))
                 .thenReturn(rows);
-        when(exportJobs.findExportBatch(from, to, false, false, true, 9L, PageRequest.of(1, 1000)))
+        when(exportJobs.findExportBatch(from, to, false, false, true, true, List.of(1L, 2L), 9L, PageRequest.of(1, 1000)))
                 .thenReturn(List.of());
 
         var preview = service.preview(request, 9L, UserRole.MANAGER);
@@ -185,10 +267,10 @@ class ExportJobServiceTest {
             for (int index = 0; index < preview.getItems().size(); index++) {
                 var item = preview.getItems().get(index);
                 var cells = sheet.getRow(index + 1);
-                assertEquals(cells.getCell(1).getStringCellValue(), item.getInvoiceNumber());
-                assertEquals(cells.getCell(3).getStringCellValue(), item.getSellerName());
-                assertEquals(cells.getCell(2).getLocalDateTimeCellValue().toLocalDate(), item.getInvoiceDate());
-                assertEquals(cells.getCell(6).getNumericCellValue(), item.getTotalAmount().doubleValue());
+                assertEquals(rows.get(index).invoiceNumber(), item.getInvoiceNumber());
+                assertEquals(cells.getCell(2).getStringCellValue(), item.getSellerName());
+                assertEquals(cells.getCell(1).getLocalDateTimeCellValue().toLocalDate(), item.getInvoiceDate());
+                assertEquals(cells.getCell(4).getNumericCellValue(), item.getTotalAmount().doubleValue());
                 assertEquals(rows.get(index).state() == DocumentState.EXTRACT_SUCCESS
                         ? ExportPreviewRequest.Status.APPROVED : ExportPreviewRequest.Status.PENDING_REVIEW,
                         item.getStatus());
@@ -201,7 +283,7 @@ class ExportJobServiceTest {
     void approvedStatusUsesEmployeeScopeAndNullPendingCount() {
         var request = new ExportPreviewRequest();
         request.setStatus(ExportPreviewRequest.Status.APPROVED);
-        when(exportJobs.countPreview(null, null, true, false, false, 12L))
+        when(exportJobs.countPreview(null, null, true, false, false, false, java.util.Collections.singletonList(null), 12L))
                 .thenReturn(new ExportJobRepository.PreviewCounts(4L, 4L, 0L));
 
         var result = service.preview(request, 12L, UserRole.EMPLOYEE);
@@ -209,7 +291,7 @@ class ExportJobServiceTest {
         assertEquals(4L, result.getTotalInvoices());
         assertEquals(4L, result.getApproved());
         assertNull(result.getPendingReview());
-        verify(exportJobs).findExportBatch(null, null, true, false, false, 12L, Pageable.unpaged());
+        verify(exportJobs).findExportBatch(null, null, true, false, false, false, java.util.Collections.singletonList(null), 12L, Pageable.unpaged());
     }
 
     /** Keeps missing invoice values and limits pending previews to the employee's export scope. */
@@ -217,9 +299,9 @@ class ExportJobServiceTest {
     void pendingPreviewPreservesMissingInvoiceValues() {
         var request = new ExportPreviewRequest();
         request.setStatus(ExportPreviewRequest.Status.PENDING_REVIEW);
-        when(exportJobs.countPreview(null, null, false, true, false, 12L))
+        when(exportJobs.countPreview(null, null, false, true, false, false, java.util.Collections.singletonList(null), 12L))
                 .thenReturn(new ExportJobRepository.PreviewCounts(1L, 0L, 1L));
-        when(exportJobs.findExportBatch(null, null, false, true, false, 12L, Pageable.unpaged()))
+        when(exportJobs.findExportBatch(null, null, false, true, false, false, java.util.Collections.singletonList(null), 12L, Pageable.unpaged()))
                 .thenReturn(List.of(new ExportJobRepository.InvoiceExportRow(UUID.randomUUID(), null,
                         null, null, null, null, null, "VND", DocumentState.REVIEW_REQUIRED, null)));
 
@@ -251,15 +333,16 @@ class ExportJobServiceTest {
     @Test
     void literalNullDatesAreAccepted() {
         var request = new ExportPreviewRequest();
+        request.setVendorIds(List.of());
         request.setDateFrom("null");
         request.setDateTo("null");
-        when(exportJobs.countPreview(null, null, false, false, false, 12L))
+        when(exportJobs.countPreview(null, null, false, false, false, false, java.util.Collections.singletonList(null), 12L))
                 .thenReturn(new ExportJobRepository.PreviewCounts(0L, 0L, 0L));
 
         var result = service.preview(request, 12L, UserRole.EMPLOYEE);
 
         assertEquals(0L, result.getTotalInvoices());
         assertTrue(result.getItems().isEmpty());
-        verify(exportJobs).countPreview(null, null, false, false, false, 12L);
+        verify(exportJobs).countPreview(null, null, false, false, false, false, java.util.Collections.singletonList(null), 12L);
     }
 }

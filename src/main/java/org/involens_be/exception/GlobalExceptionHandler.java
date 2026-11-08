@@ -13,6 +13,13 @@ import org.springframework.security.access.AccessDeniedException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    /** Returns a client error when required supplier-report filters are missing or invalid. */
+    @ExceptionHandler(InvalidVendorItemReportException.class)
+    public ResponseEntity<BaseResponse<Void>> handleVendorItemReport(InvalidVendorItemReportException exception) {
+        log.warn("Returning invalid supplier report filter response: {}", exception.getMessage());
+        return ResponseEntity.badRequest().body(BaseResponse.error(null, "VALIDATION_ERROR", exception.getMessage()));
+    }
+
     /** Rejects oversized multipart requests before upload processing with the user-facing batch limit. */
     @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
     public ResponseEntity<BaseResponse<Void>> handleMaxUploadSizeExceeded(
@@ -63,10 +70,10 @@ public class GlobalExceptionHandler {
                 .body(BaseResponse.error(null, "NO_INVOICES_TO_EXPORT", exception.getMessage()));
     }
 
-    /** Returns a safe server-error response when invoice workbook creation fails. */
+    /** Returns a safe server-error response when an invoice download cannot be generated. */
     @ExceptionHandler(InvoiceExportException.class)
     public ResponseEntity<BaseResponse<Void>> handleInvoiceExport(InvoiceExportException exception) {
-        log.error("Returning invoice Excel export failure response", exception);
+        log.error("Returning invoice export failure response", exception);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(BaseResponse.error(null, "INVOICE_EXPORT_FAILED", exception.getMessage()));
     }

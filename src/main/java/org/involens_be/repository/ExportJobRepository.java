@@ -25,6 +25,7 @@ public interface ExportJobRepository extends JpaRepository<InvoiceEntity, UUID> 
                     org.involens_be.common.DocumentState.EXTRACT_SUCCESS,
                     org.involens_be.common.DocumentState.REVIEW_REQUIRED)
               and (:manager = true or d.uploadedById = :userId)
+              and (:filterVendors = false or i.vendorId in :vendorIds)
               and (cast(:dateFrom as date) is null or i.invoiceDate >= :dateFrom)
               and (cast(:dateTo as date) is null or i.invoiceDate <= :dateTo)
               and (:approvedOnly = false
@@ -39,6 +40,8 @@ public interface ExportJobRepository extends JpaRepository<InvoiceEntity, UUID> 
             @Param("approvedOnly") boolean approvedOnly,
             @Param("pendingOnly") boolean pendingOnly,
             @Param("manager") boolean manager,
+            @Param("filterVendors") boolean filterVendors,
+            @Param("vendorIds") List<Long> vendorIds,
             @Param("userId") Long userId,
             Pageable pageable);
 
@@ -63,6 +66,7 @@ public interface ExportJobRepository extends JpaRepository<InvoiceEntity, UUID> 
                     org.involens_be.common.DocumentState.EXTRACT_SUCCESS,
                     org.involens_be.common.DocumentState.REVIEW_REQUIRED)
               and (:manager = true or d.uploadedById = :userId)
+              and (:filterVendors = false or i.vendorId in :vendorIds)
               and (cast(:dateFrom as date) is null or i.invoiceDate >= :dateFrom)
               and (cast(:dateTo as date) is null or i.invoiceDate <= :dateTo)
               and (:approvedOnly = false
@@ -76,6 +80,8 @@ public interface ExportJobRepository extends JpaRepository<InvoiceEntity, UUID> 
             @Param("approvedOnly") boolean approvedOnly,
             @Param("pendingOnly") boolean pendingOnly,
             @Param("manager") boolean manager,
+            @Param("filterVendors") boolean filterVendors,
+            @Param("vendorIds") List<Long> vendorIds,
             @Param("userId") Long userId);
 
     /** Carries aggregate invoice totals returned by the export-preview query. */

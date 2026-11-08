@@ -26,6 +26,38 @@ public class ExportJobService {
 
     private final ExportJobRepository exportJobRepository;
     private final InvoiceExcelWriter invoiceExcelWriter;
+    private final InvoiceCsvWriter invoiceCsvWriter;
+
+    /** Downloads CSV invoice summaries using the same selection and visibility rules as Excel. */
+    @Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
+    public byte[] exportCsv(ExportPreviewRequest request, Long userId, UserRole role) {
+        log.info("Starting invoice CSV export. userId={}, role={}, dateFrom={}, dateTo={}, status={}",
+                userId, role, request.getDateFrom(), request.getDateTo(), request.getStatus());
+        LocalDate dateFrom = parseDate(request.getDateFrom(), "dateFrom");
+        LocalDate dateTo = parseDate(request.getDateTo(), "dateTo");
+        validateDateRange(dateFrom, dateTo);
+        boolean filterVendors = request.getVendorIds() != null && !request.getVendorIds().isEmpty();
+        java.util.List<Long> vendorIds = filterVendors ? request.getVendorIds() : java.util.Collections.singletonList(null);
+        log.debug("Applying export supplier filter. enabled={}, supplierCount={}",
+                filterVendors, filterVendors ? vendorIds.size() : 0);
+        boolean manager = role == UserRole.MANAGER;
+        boolean approvedOnly = request.getStatus() == ExportPreviewRequest.Status.APPROVED;
+        boolean pendingOnly = request.getStatus() == ExportPreviewRequest.Status.PENDING_REVIEW;
+        try {
+            byte[] result = invoiceCsvWriter.write(batch -> {
+                log.debug("Loading invoice CSV batch. userId={}, batch={}", userId, batch);
+                return exportJobRepository.findExportBatch(dateFrom, dateTo, approvedOnly, pendingOnly,
+                        manager, filterVendors, vendorIds, userId, PageRequest.of(batch, 1000));
+            });
+            log.info("Invoice CSV export completed. userId={}, bytes={}", userId, result.length);
+            return result;
+        } catch (NoInvoicesToExportException exception) {
+            log.warn("No invoices matched CSV export selection. userId={}", userId);
+            throw exception;
+        } catch (IOException | RuntimeException exception) {
+            throw new InvoiceExportException("CSV", exception);
+        }
+    }
 
     /** Downloads all visible invoices matching the preview selection as an accounting workbook. */
     @Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
@@ -35,6 +67,10 @@ public class ExportJobService {
         LocalDate dateFrom = parseDate(request.getDateFrom(), "dateFrom");
         LocalDate dateTo = parseDate(request.getDateTo(), "dateTo");
         validateDateRange(dateFrom, dateTo);
+        boolean filterVendors = request.getVendorIds() != null && !request.getVendorIds().isEmpty();
+        java.util.List<Long> vendorIds = filterVendors ? request.getVendorIds() : java.util.Collections.singletonList(null);
+        log.debug("Applying export supplier filter. enabled={}, supplierCount={}",
+                filterVendors, filterVendors ? vendorIds.size() : 0);
         boolean manager = role == UserRole.MANAGER;
         boolean approvedOnly = request.getStatus() == ExportPreviewRequest.Status.APPROVED;
         boolean pendingOnly = request.getStatus() == ExportPreviewRequest.Status.PENDING_REVIEW;
@@ -42,7 +78,7 @@ public class ExportJobService {
             byte[] result = invoiceExcelWriter.write(batch -> {
                 log.debug("Loading invoice export batch. userId={}, batch={}", userId, batch);
                 return exportJobRepository.findExportBatch(dateFrom, dateTo, approvedOnly, pendingOnly,
-                        manager, userId, PageRequest.of(batch, 1000));
+                        manager, filterVendors, vendorIds, userId, PageRequest.of(batch, 1000));
             });
             return result;
         } catch (NoInvoicesToExportException exception) {
@@ -61,13 +97,17 @@ public class ExportJobService {
         LocalDate dateFrom = parseDate(request.getDateFrom(), "dateFrom");
         LocalDate dateTo = parseDate(request.getDateTo(), "dateTo");
         validateDateRange(dateFrom, dateTo);
+        boolean filterVendors = request.getVendorIds() != null && !request.getVendorIds().isEmpty();
+        java.util.List<Long> vendorIds = filterVendors ? request.getVendorIds() : java.util.Collections.singletonList(null);
+        log.debug("Applying export supplier filter. enabled={}, supplierCount={}",
+                filterVendors, filterVendors ? vendorIds.size() : 0);
         boolean manager = role == UserRole.MANAGER;
         boolean approvedOnly = request.getStatus() == ExportPreviewRequest.Status.APPROVED;
         boolean pendingOnly = request.getStatus() == ExportPreviewRequest.Status.PENDING_REVIEW;
         var counts = exportJobRepository.countPreview(dateFrom, dateTo,
-                approvedOnly, pendingOnly, manager, userId);
+                approvedOnly, pendingOnly, manager, filterVendors, vendorIds, userId);
         var items = exportJobRepository.findExportBatch(dateFrom, dateTo,
-                        approvedOnly, pendingOnly, manager, userId, Pageable.unpaged())
+                        approvedOnly, pendingOnly, manager, filterVendors, vendorIds, userId, Pageable.unpaged())
                 .stream().map(this::toPreviewItem).toList();
         boolean includeApproved = request.getStatus() != ExportPreviewRequest.Status.PENDING_REVIEW;
         boolean includePending = request.getStatus() != ExportPreviewRequest.Status.APPROVED;

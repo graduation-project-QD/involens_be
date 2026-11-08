@@ -16,5 +16,8 @@ public class ExportPreviewRequest {
 
     private String dateTo;
 
+    @io.swagger.v3.oas.annotations.Parameter(description = "Optional supplier IDs; omitted or empty selects all suppliers")
+    private java.util.List<Long> vendorIds;
+
     private Status status = Status.ALL;
 }

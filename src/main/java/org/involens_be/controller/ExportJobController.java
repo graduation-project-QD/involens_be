@@ -34,8 +34,36 @@ public class ExportJobController {
 
     private final ExportJobService exportJobService;
 
+    /** Downloads CSV invoice summaries within the authenticated user's filters and visibility scope. */
+    @Operation(summary = "Download invoice CSV file",
+            description = "Optional vendorIds selects suppliers by ID, combined with date, status and visibility filters.",
+            security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "CSV file downloaded"),
+            @ApiResponse(responseCode = "400", description = "Invalid date range or status"),
+            @ApiResponse(responseCode = "401", description = "JWT is missing or invalid"),
+            @ApiResponse(responseCode = "404", description = "No visible invoices match the filters"),
+            @ApiResponse(responseCode = "500", description = "CSV export failed")
+    })
+    @PostMapping("/csv")
+    public ResponseEntity<byte[]> exportCsv(
+            @ModelAttribute @ParameterObject ExportPreviewRequest request,
+            @Parameter(hidden = true) @AuthenticationPrincipal Jwt jwt) {
+        Long userId = readUserId(jwt);
+        UserRole role = readRole(jwt);
+        log.info("Received invoice CSV download request. userId={}, role={}", userId, role);
+        byte[] csv = exportJobService.exportCsv(request, userId, role);
+        log.info("Returning invoice CSV download. userId={}, bytes={}", userId, csv.length);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("text/csv;charset=UTF-8"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"invoices.csv\"")
+                .contentLength(csv.length)
+                .body(csv);
+    }
+
     /** Downloads an invoice-only Excel file within the caller's preview filters and visibility scope. */
     @Operation(summary = "Download invoice Excel workbook",
+            description = "Optional vendorIds selects suppliers by ID, combined with date, status and visibility filters.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Excel workbook downloaded"),
@@ -61,6 +89,7 @@ public class ExportJobController {
 
     /** Returns invoice counts that let the authenticated user review an export selection. */
     @Operation(summary = "Preview invoice export counts",
+            description = "Optional vendorIds filters both counts and items using the same supplier selection as downloads.",
             security = @SecurityRequirement(name = OpenApiConfig.BEARER_AUTH_SCHEME))
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Export preview returned"),

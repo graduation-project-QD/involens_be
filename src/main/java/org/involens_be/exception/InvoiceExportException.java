@@ -7,7 +7,12 @@ public class InvoiceExportException extends RuntimeException {
 
     /** Preserves an export failure while providing a safe message for the download client. */
     public InvoiceExportException(Throwable cause) {
-        super("Xuất file Excel thất bại. Vui lòng thử lại.", cause);
-        log.error("Invoice Excel export failed", cause);
+        this("Excel", cause);
+    }
+
+    /** Reports the failed download format while retaining the underlying export failure for diagnostics. */
+    public InvoiceExportException(String format, Throwable cause) {
+        super("Xuất file " + format + " thất bại. Vui lòng thử lại.", cause);
+        log.error("Invoice {} export failed", format, cause);
     }
 }

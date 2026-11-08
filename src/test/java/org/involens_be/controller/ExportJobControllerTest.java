@@ -28,6 +28,86 @@ class ExportJobControllerTest {
     private ExportJobService service;
     private MockMvc mvc;
 
+    /** Binds multiple selected suppliers consistently for both downloads and their preview. */
+    @Test
+    void supplierIdsBindForAllExportEndpoints() throws Exception {
+        when(service.exportExcel(any(), eq(12L), eq(UserRole.EMPLOYEE))).thenReturn(new byte[0]);
+        when(service.exportCsv(any(), eq(12L), eq(UserRole.EMPLOYEE))).thenReturn(new byte[0]);
+        when(service.preview(any(), eq(12L), eq(UserRole.EMPLOYEE)))
+                .thenReturn(ExportPreviewResponse.builder().totalInvoices(0L).items(List.of()).build());
+        for (String endpoint : List.of("excel", "csv", "preview")) {
+            mvc.perform(post("/api/v1/export-jobs/" + endpoint).param("vendorIds", "1", "2"))
+                    .andExpect(status().isOk());
+        }
+        var requests = org.mockito.ArgumentCaptor.forClass(ExportPreviewRequest.class);
+        verify(service).exportExcel(requests.capture(), eq(12L), eq(UserRole.EMPLOYEE));
+        verify(service).exportCsv(requests.capture(), eq(12L), eq(UserRole.EMPLOYEE));
+        verify(service).preview(requests.capture(), eq(12L), eq(UserRole.EMPLOYEE));
+        for (ExportPreviewRequest request : requests.getAllValues()) {
+            org.junit.jupiter.api.Assertions.assertEquals(List.of(1L, 2L), request.getVendorIds());
+        }
+    }
+
+    /** Rejects nonnumeric supplier selections before any export business logic runs. */
+    @Test
+    void invalidSupplierIdsReturnBadRequest() throws Exception {
+        for (String endpoint : List.of("excel", "csv", "preview")) {
+            mvc.perform(post("/api/v1/export-jobs/" + endpoint).param("vendorIds", "invalid"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        }
+        verifyNoInteractions(service);
+    }
+
+    /** Returns CSV attachment bytes and binds the selected filters with the authenticated employee. */
+    @Test
+    void csvReturnsDownloadAndBindsFilters() throws Exception {
+        byte[] bytes = "\uFEFFSTT,Ngày hóa đơn\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(service.exportCsv(any(), eq(12L), eq(UserRole.EMPLOYEE))).thenAnswer(invocation -> {
+            ExportPreviewRequest request = invocation.getArgument(0);
+            org.junit.jupiter.api.Assertions.assertEquals("2026-09-01", request.getDateFrom());
+            org.junit.jupiter.api.Assertions.assertEquals("2026-09-30", request.getDateTo());
+            org.junit.jupiter.api.Assertions.assertEquals(ExportPreviewRequest.Status.APPROVED, request.getStatus());
+            return bytes;
+        });
+        mvc.perform(post("/api/v1/export-jobs/csv").param("dateFrom", "2026-09-01")
+                        .param("dateTo", "2026-09-30").param("status", "APPROVED"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("text/csv;charset=UTF-8"))
+                .andExpect(header().string("Content-Disposition", "attachment; filename=\"invoices.csv\""))
+                .andExpect(content().bytes(bytes));
+    }
+
+    /** Reports an empty CSV selection through the existing JSON error envelope. */
+    @Test
+    void csvEmptySelectionReturnsNotFound() throws Exception {
+        when(service.exportCsv(any(), eq(12L), eq(UserRole.EMPLOYEE)))
+                .thenThrow(new org.involens_be.exception.NoInvoicesToExportException());
+        mvc.perform(post("/api/v1/export-jobs/csv"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NO_INVOICES_TO_EXPORT"));
+    }
+
+    /** Reports CSV generation failures with a format-specific message. */
+    @Test
+    void csvFailureReturnsServerError() throws Exception {
+        when(service.exportCsv(any(), eq(12L), eq(UserRole.EMPLOYEE)))
+                .thenThrow(new org.involens_be.exception.InvoiceExportException("CSV", new java.io.IOException("failure")));
+        mvc.perform(post("/api/v1/export-jobs/csv"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error.code").value("INVOICE_EXPORT_FAILED"))
+                .andExpect(jsonPath("$.error.message").value("Xuất file CSV thất bại. Vui lòng thử lại."));
+    }
+
+    /** Rejects unsupported CSV statuses before calling the export service. */
+    @Test
+    void csvUnsupportedStatusReturnsBadRequest() throws Exception {
+        mvc.perform(post("/api/v1/export-jobs/csv").param("status", "REJECTED"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        verifyNoInteractions(service);
+    }
+
     /** Returns attachment bytes and passes the preview selection and authenticated scope to the service. */
     @Test
     void excelReturnsDownloadAndBindsFilters() throws Exception {
