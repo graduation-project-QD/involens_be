@@ -43,4 +43,9 @@ public class DocumentListItemResponse {
     @JsonProperty("current_state")
     @SerializedName("current_state")
     private DocumentState currentState;
+
+    @Expose
+    @JsonProperty("reason")
+    @SerializedName("reason")
+    private String reason;
 }

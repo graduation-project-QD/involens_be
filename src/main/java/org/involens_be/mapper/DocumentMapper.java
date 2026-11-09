@@ -26,9 +26,10 @@ import java.time.ZoneOffset;
 @Mapper(componentModel = "spring")
 public interface DocumentMapper {
 
-    /** Maps document metadata and an uploader display name to a list item returned by the document API. */
+    /** Maps document metadata, its stored error message and uploader display name to a document list item. */
     @Mapping(target = "uploadedByName", source = "uploaderName")
     @Mapping(target = "uploadedAt", expression = "java(toUtc(document.getUploadedAt()))")
+    @Mapping(target = "reason", source = "document.errorMessage")
     DocumentListItemResponse toListItemResponse(DocumentEntity document, String uploaderName, String thumbnailUrl);
 
     /** Maps document metadata and uploader information to the detailed document API response. */
